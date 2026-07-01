@@ -1,0 +1,16 @@
+{
+    "4922b2": {
+        "name": "Registro de voz",
+        "frequency": "once",
+        "hour": 0,
+        "minute": 0,
+        "weekday": "",
+        "interval_minutes": 60,
+        "task_action": "custom_script",
+        "task_parameters": {
+            "command": "SYS_REGISTER_VOICE"
+        },
+        "enabled": true,
+        "last_run": null
+    }
+}
