@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ILUM Core UI Background</title>
+    <style>
+        /* ─── TIPOGRAFÍA ALLEGIANT-REGULAR ─── */
+        @font-face {
+            font-family: 'Allegiant-Regular';
+            src: url('fonts/Allegiant-Regular.otf') format('opentype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        :root {
+            --primary-glow: rgba(0, 212, 255, 0.45);
+            --wave-color-1: rgba(0, 212, 255, 0.85);
+            --wave-color-2: rgba(10, 140, 255, 0.6);
+            --wave-color-3: rgba(255, 255, 255, 0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: transparent;
+            overflow: hidden;
+            font-family: sans-serif;
+            user-select: none;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ─── BRILLO AMBIENTAL DE FONDO ─── */
+        .ambient-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 60%;
+            height: 60%;
+            transform: translate(-50%, -50%);
+            background: radial-gradient(circle, rgba(0, 180, 255, 0.15) 0%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none;
+            mix-blend-mode: screen;
+            z-index: 1;
+            transition: all 0.5s ease;
+        }
+
+        /* ─── BRANDING CENTRADO ─── */
+        #branding-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            text-align: center;
+            transform: translateY(-20px);
+        }
+
+        #logo {
+            font-family: 'Allegiant-Regular', sans-serif;
+            font-size: 84px;
+            font-weight: normal;
+            letter-spacing: 12px;
+            margin-bottom: 20px;
+            color: #ffffff;
+            /* Degradado plateado/metálico */
+            background: linear-gradient(to bottom, #ffffff 0%, #e2e8f0 45%, #94a3b8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.25)) drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+            transition: all 0.5s ease;
+        }
+
+        /* ─── CANVAS ONDA DE SONIDO ─── */
+        #soundwave-canvas {
+            width: 220px;
+            height: 60px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+    </style>
+</head>
+<body>
+<div id="container">
+    <div class="ambient-glow" id="glow"></div>
+    <div id="branding-area">
+        <h1 id="logo">I.L.U.M</h1>
+        <canvas id="soundwave-canvas" width="600" height="120"></canvas>
+    </div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+// ── Conexión Qt Bridge
+let pyBridge = null;
+try {
+    new QWebChannel(qt.webChannelTransport, function(ch) {
+        pyBridge = ch.objects.pyBridge;
+        console.log("Qt WebChannel conectado!");
+        if (pyBridge && pyBridge.request_theme) pyBridge.request_theme();
+    });
+} catch(e) { console.log("Modo independiente."); }
+
+const canvas = document.getElementById('soundwave-canvas');
+const ctx = canvas.getContext('2d');
+const glowEl = document.getElementById('glow');
+const logoEl = document.getElementById('logo');
+
+// ── Estado global
+let currentState = "LISTENING";
+let currentVolume = 0.0;
+let smoothVol = 0.0;
+let isMuted = false;
+let phase = 0;
+let t = 0;
+
+let themeColors = { PRI: '#00d4ff', PRI_DIM: '#005f77', TEXT: '#7aeeff', BG: '#050c14' };
+
+// ── Dibuja la onda en bucle
+function draw() {
+    t += 0.015;
+    phase += 0.05;
+
+    // Suavizado del volumen
+    smoothVol += (currentVolume > smoothVol ? 0.35 : 0.08) * (currentVolume - smoothVol);
+    
+    // Limpieza
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const w = canvas.width;
+    const h = canvas.height;
+    const centerY = h / 2;
+    
+    // Configurar color de onda basado en estado y tema
+    let activeColor1 = 'rgba(0, 212, 255, 0.85)';
+    let activeColor2 = 'rgba(10, 140, 255, 0.6)';
+    let activeColor3 = 'rgba(255, 255, 255, 0.4)';
+    
+    if (isMuted) {
+        // Suspendido / inactivo: gris a blanco neutro (sin rojo)
+        activeColor1 = 'rgba(225, 228, 232, 0.55)'; // Gris claro
+        activeColor2 = 'rgba(255, 255, 255, 0.30)'; // Blanco tenue
+        activeColor3 = 'rgba(255, 255, 255, 0.15)';
+    } else if (currentState === "THINKING") {
+        activeColor1 = 'rgba(168, 85, 247, 0.8)'; // Purple
+        activeColor2 = 'rgba(139, 92, 246, 0.5)';
+        activeColor3 = 'rgba(255, 255, 255, 0.3)';
+    } else {
+        // Usar color del tema si está disponible
+        try {
+            const hex = themeColors.PRI;
+            // Parse hex
+            let r = 0, g = 212, b = 255;
+            if (hex.startsWith('#')) {
+                const hVal = hex.substring(1);
+                r = parseInt(hVal.substring(0, 2), 16);
+                g = parseInt(hVal.substring(2, 4), 16);
+                b = parseInt(hVal.substring(4, 6), 16);
+            }
+            activeColor1 = `rgba(${r}, ${g}, ${b}, 0.85)`;
+            activeColor2 = `rgba(${Math.max(0, r-40)}, ${Math.max(0, g-40)}, ${b}, 0.55)`;
+        } catch(e) {}
+    }
+
+    // Variaciones basadas en el estado
+    let ambientScale = 1.0;
+    let logoScale = 1.0;
+
+    if (currentState === "SPEAKING") {
+        ambientScale = 1.0 + smoothVol * 0.4;
+        logoScale = 1.0 + smoothVol * 0.05;
+        glowEl.style.background = `radial-gradient(circle, ${activeColor2.replace('0.55', '0.2').replace('0.6', '0.2')} 0%, transparent 70%)`;
+    } else if (currentState === "THINKING") {
+        ambientScale = 1.05 + Math.sin(t * 1.5) * 0.05;
+        logoScale = 1.01 + Math.sin(t * 1.5) * 0.01;
+        glowEl.style.background = `radial-gradient(circle, rgba(168, 85, 247, 0.12) 0%, transparent 70%)`;
+    } else if (currentState === "MUTED") {
+        ambientScale = 0.8;
+        glowEl.style.background = `radial-gradient(circle, rgba(255, 255, 255, 0.06) 0%, transparent 70%)`;
+    } else {
+        glowEl.style.background = `radial-gradient(circle, ${activeColor2.replace('0.55', '0.12').replace('0.6', '0.12')} 0%, transparent 70%)`;
+    }
+
+    glowEl.style.transform = `translate(-50%, -50%) scale(${ambientScale})`;
+    logoEl.style.transform = `scale(${logoScale})`;
+
+    // Dibujar ondas
+    if ((currentState === "SPEAKING" || smoothVol > 0.01) && !isMuted) {
+        // ONDA 1: Onda principal alta
+        drawSineWave(activeColor1, 2.5, 0.015, smoothVol * 45, phase);
+        // ONDA 2: Onda secundaria media
+        drawSineWave(activeColor2, 1.8, 0.025, smoothVol * 30, -phase * 0.8 + 1.0);
+        // ONDA 3: Onda blanca fina de fondo
+        drawSineWave(activeColor3, 1.0, 0.035, smoothVol * 18, phase * 1.2 + 2.0);
+    } else if (currentState === "THINKING") {
+        // Onda suave constante de pensamiento (sin importar volumen de micrófono)
+        let thinkVol = 0.2 + Math.sin(t * 2) * 0.05;
+        drawSineWave(activeColor1, 2.0, 0.02, thinkVol * 18, phase * 0.5);
+        drawSineWave(activeColor2, 1.2, 0.03, thinkVol * 12, -phase * 0.4 + 0.5);
+    } else {
+        // Línea plana brillante (Listening / Muted)
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        ctx.lineTo(w, centerY);
+        
+        ctx.lineWidth = isMuted ? 1.0 : 1.8;
+        ctx.strokeStyle = activeColor1;
+        ctx.shadowBlur = isMuted ? 4 : 12;
+        ctx.shadowColor = activeColor1;
+        ctx.stroke();
+    }
+
+    requestAnimationFrame(draw);
+}
+
+// ── Función helper para dibujar ondas suavizadas en los extremos (Hann window)
+function drawSineWave(color, lineWidth, freq, amp, phaseOffset) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const centerY = h / 2;
+
+    ctx.beginPath();
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = color;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = color;
+
+    for (let x = 0; x < w; x++) {
+        // Hann window factor para que la onda inicie y termine en cero en los bordes
+        const envelope = Math.sin((x / w) * Math.PI);
+        const y = centerY + Math.sin(x * freq + phaseOffset) * amp * envelope;
+
+        if (x === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+}
+
+// ── API pública llamada desde Python
+window.updateState = function(state) {
+    currentState = state;
+    isMuted = (state === "MUTED");
+};
+
+window.updateVolume = function(level) {
+    currentVolume = level;
+};
+
+window.setThemeColors = function(colors) {
+    themeColors = {
+        PRI: colors.PRI || '#00d4ff',
+        PRI_DIM: colors.PRI_DIM || '#005f77',
+        TEXT: colors.TEXT || '#7aeeff',
+        BG: colors.BG || '#050c14'
+    };
+    document.documentElement.style.setProperty('--primary-glow', themeColors.PRI + '73'); // alpha 45%
+};
+
+window.updatePerformance = function(quality) {
+    // No requiere ajustes complejos de rendimiento ya que el Canvas 2D de onda es sumamente rápido
+};
+
+// Boot
+draw();
+</script>
+</body>
+</html>
