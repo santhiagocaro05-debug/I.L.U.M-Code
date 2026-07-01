@@ -1,0 +1,5 @@
+{
+  "pinch": "left_click",
+  "swipe": "cursor_move",
+  "two_finger_tap": "double_click"
+}
