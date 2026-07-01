@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "C:\Users\cuent\Documents\I.L.U.M-C0DE\launch_ilum.py", line 32, in main
+    import main as ilum_main
+  File "C:\Users\cuent\Documents\I.L.U.M-C0DE\main.py", line 11, in <module>
+    import sounddevice as sd
+ModuleNotFoundError: No module named 'sounddevice'

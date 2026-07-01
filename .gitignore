@@ -1,0 +1,61 @@
+# Environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*$py.class
+
+# Config and Sensitive Files
+config/api_keys.json
+config/license.json
+config/license.json.bak
+config/supabase_ca.pem
+config/rules.json
+config/vision_guardian_state.json
+config/whatsapp_contacts.json
+config/hand_landmarker.task
+config/last_captured_screen.png
+config/.spotify_cache
+config/vosk_model/
+custom_tools.json
+
+# Backups
+backups/
+
+# Logs
+*.log
+jarvis.log
+
+# Scratch scripts
+patch_main.py
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# TTS caches
+config/tts_cache/
+assets/voice_samples/jarvis_processed/
+
+# Admin Tools
+ILUM_Admin_Panel/
+
+# Compilation Artifacts and Temp reports
+compilar.py
+*.build/
+*.onefile-build/
+*.dist/
+ILUM.exe
+nuitka-crash-report.xml
+*.egg-info/
+
+
+ffmpeg.exe
+ffprobe.exe

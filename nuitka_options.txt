@@ -1,0 +1,15 @@
+--standalone
+--windows-console-mode=disable
+--enable-plugin=pyqt6
+--follow-imports
+--include-data-dir=assets=assets
+--include-data-dir=config=config
+--include-data-dir=actions=actions
+--include-data-dir=memory=memory
+--include-data-dir=core=core
+--include-data-dir=voice=voice
+--include-data-file=tts_engine.py=tts_engine.py
+--include-data-file=ghost.skill=ghost.skill
+--include-data-file=SuspenderIlum.wav=SuspenderIlum.wav
+--windows-icon-from-ico=assets/ilum_icono.ico
+--output-dir=dist_nuitka
