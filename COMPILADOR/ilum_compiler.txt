@@ -1,0 +1,8 @@
+powershell -ExecutionPolicy Bypass -File .\metodoNT+PY.ps1 -Clean -ProjectPath "C:\Users\cuent\Documents\I.L.U.M-C0DE"
+
+
+
+mi api 
+
+
+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
