@@ -1,14 +1,14 @@
 """
-ui.py — Redesigned Clean ILUM HUD + Full Settings Suite.
+ui.py — Redesigned Clean NEXUS HUD + Full Settings Suite.
 
 Layout:
 - Top-left: Large floating clock + date
 - Top-right: Two colored dots + hamburger menu (≡) → opens settings
 - Right side: RAM % + CPU % + TEM °C readouts
-- Center: I.L.U.M logo + waveform (via WebGL orb)
+- Center:  logo + waveform (via WebGL orb)
 - Bottom-left: Bell / Folder / Calendar icon buttons + notification liquid-glass panel
 - Bottom-center: Camera | Moon-Sun (suspend) | Chat-bubble icons
-- Bottom-right: "I.L.U.M Pro" badge
+- Bottom-right: "NEXUS Pro" badge
 - Floating Spotify widget (opens on click / command)
 - Auto-sizing pill chat bar (hidden by default, opens on chat icon press)
 
@@ -117,9 +117,9 @@ def apply_theme_tokens(theme_name: str, custom_hex: str = None):
     try:
         from memory.config_manager import load_api_keys
         cfg = load_api_keys()
-        if cfg.get("ilum_bg_color"):    C_BG    = cfg["ilum_bg_color"]
-        if cfg.get("ilum_panel_color"): C_PANEL = cfg["ilum_panel_color"]
-        if cfg.get("ilum_text_color"):  C_TEXT  = cfg["ilum_text_color"]
+        if cfg.get("nexus_bg_color"):    C_BG    = cfg["nexus_bg_color"]
+        if cfg.get("nexus_panel_color"): C_PANEL = cfg["nexus_panel_color"]
+        if cfg.get("nexus_text_color"):  C_TEXT  = cfg["nexus_text_color"]
     except Exception:
         pass
 
@@ -154,8 +154,8 @@ def hex_to_bgr(hex_str: str) -> tuple[int, int, int]:
 try:
     from memory.config_manager import load_api_keys
     _cfg = load_api_keys()
-    apply_theme_tokens(_cfg.get("ilum_theme", "gold"), _cfg.get("ilum_custom_theme_color", ""))
-    FONT_FAMILY = _cfg.get("ilum_font_family", "Century Gothic")
+    apply_theme_tokens(_cfg.get("nexus_theme", "gold"), _cfg.get("nexus_custom_theme_color", ""))
+    FONT_FAMILY = _cfg.get("nexus_font_family", "Century Gothic")
 except Exception:
     apply_theme_tokens("gold")
 
@@ -817,25 +817,27 @@ class ProBadge(QLabel):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.update_text()
 
-    def update_text(self, ai_name: str = "I.L.U.M"):
+    def update_text(self, ai_name: str = "◉ N.E.X.U.S"):  
 
         self.setText(
             f"""
             <span style="
                 color:#d8dbe2;
-                font-weight:500;
-                letter-spacing:0.5px;
+                font-weight:700;
+                letter-spacing:1px;
+                font-size:13px;
             ">
                 {ai_name}
             </span>
-
             <span style="
                 color:#b56cff;
                 font-weight:700;
                 background-color:rgba(35,20,55,0.85);
                 border:1px solid rgba(181,108,255,0.55);
                 border-radius:3px;
-                padding:1px 6px;
+                padding:1px 8px;
+                margin-left:6px;
+                font-size:10px;
             ">
                 Pro
             </span>
@@ -914,7 +916,7 @@ class NotificationCard(QWidget):
         layout.addLayout(hdr)
 
         # 🔥 SIN COLORES FEOS
-        self.default_item = self._make_item("ILUM", "Sistema iniciado correctamente.")
+        self.default_item = self._make_item("NEXUS", "Sistema iniciado correctamente.")
         self.update_item  = self._make_item("Actualización", "Nueva versión disponible.")
         self.secure_item  = self._make_item("Sistema protegido", "Protección activa correctamente.")
 
@@ -1099,33 +1101,31 @@ QPushButton:hover {
         self.prog_bar.setValue(0)
         self.prog_bar.setTextVisible(False)
         self.prog_bar.setFixedHeight(3)
-        self.prog_bar.setStyleSheet("""
-        QProgressBar {
-            background: rgba(255,255,255,0.08);
-            border: none;
-            border-radius: 2px;
-        }
-        QProgressBar::chunk {
-            background: rgba(255,255,255,0.85);
-            border-radius: 2px;
-        }
-        """)
+        # Progress Bar
+        self.prog_bar = QProgressBar()
+        self.prog_bar.setRange(0, 100)
+        self.prog_bar.setValue(0)
+        self.prog_bar.setTextVisible(False)
+        self.prog_bar.setFixedHeight(3)
+        self.prog_bar.setStyleSheet('''
+        QProgressBar { background: rgba(255,255,255,0.08); border: none; border-radius: 2px; }
+        QProgressBar::chunk { background: rgba(255,255,255,0.85); border-radius: 2px; }
+        ''')
 
+        
         self.lbl_time_l = QLabel("0:00")
         self.lbl_time_l.setStyleSheet("font-size:8px;color:rgba(200,200,210,0.55);")
-
         self.lbl_time_r = QLabel("0:00")
         self.lbl_time_r.setStyleSheet("font-size:8px;color:rgba(200,200,210,0.55);")
-
+        
         prog_row = QHBoxLayout()
         prog_row.setSpacing(4)
         prog_row.addWidget(self.lbl_time_l)
         prog_row.addWidget(self.prog_bar, 1)
         prog_row.addWidget(self.lbl_time_r)
-
+        
         right.addLayout(prog_row)
 
-        # 🎮 CONTROLES
         ctrl = QHBoxLayout()
         ctrl.setSpacing(4)
         ctrl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1362,106 +1362,231 @@ QPushButton:hover {
 
 
 class FloatingMediaWidget(QWidget):
+    seek_requested = pyqtSignal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("MediaFloat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(320, 90)
+        self.setFixedSize(340, 100)
         self.drag_position = None
         self._is_playing = False
+        self._dur = 0
 
         self.setStyleSheet('''
 QWidget#MediaFloat {
-    background: rgba(18,18,22,0.85);
-    border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 20px;
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+        stop:0 rgba(22,20,30,0.92),
+        stop:1 rgba(14,12,22,0.95));
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 22px;
 }
 QLabel {
     background: transparent;
     border: none;
-    color: rgba(245,245,250,0.96);
+    color: rgba(245,245,250,0.95);
 }
 QPushButton {
     background: transparent;
     border: none;
+    border-radius: 14px;
 }
 QPushButton:hover {
-    background: rgba(255,255,255,0.06);
-    border-radius: 15px;
+    background: rgba(255,255,255,0.08);
+}
+QPushButton:pressed {
+    background: rgba(255,255,255,0.14);
 }
 ''')
-        apply_glass_shadow(self, blur_radius=30, y_offset=6, alpha=150)
+        apply_glass_shadow(self, blur_radius=40, y_offset=8, alpha=170)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 10)
+        root.setSpacing(7)
 
+        # ── fila superior: carátula + info + indicador live ───────────────────
+        top = QHBoxLayout()
+        top.setSpacing(11)
+        top.setContentsMargins(0, 0, 0, 0)
+
+        # carátula con borde sutil
         self.lbl_art = QLabel()
-        self.lbl_art.setFixedSize(40, 40)
-        self.lbl_art.setStyleSheet("background: rgba(255,255,255,0.06); border-radius: 8px;")
+        self.lbl_art.setFixedSize(44, 44)
         self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_art.setStyleSheet("""
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                stop:0 rgba(120,180,255,0.12),
+                stop:0.5 rgba(80,140,255,0.08),
+                stop:1 rgba(60,100,220,0.15));
+            border: 1px solid rgba(120,180,255,0.20);
+            border-radius: 10px;
+        """)
         if HAS_QTA:
-            self.lbl_art.setPixmap(qta.icon('fa5b.youtube', color='rgba(255,20,20,0.8)').pixmap(20, 20))
-        layout.addWidget(self.lbl_art)
+            self.lbl_art.setPixmap(
+                qta.icon('fa5b.youtube', color='rgba(140,190,255,0.85)').pixmap(22, 22)
+            )
+        top.addWidget(self.lbl_art)
 
-        right = QVBoxLayout()
-        right.setSpacing(2)
+        # columna info
+        info = QVBoxLayout()
+        info.setSpacing(1)
+        info.setContentsMargins(0, 2, 0, 2)
 
         self.lbl_track = QLabel("Not Playing")
-        self.lbl_track.setStyleSheet("font-size:11px; font-weight:600; color:#ffffff;")
-        self.lbl_artist = QLabel("Windows Media")
-        self.lbl_artist.setStyleSheet("font-size:10px; color:rgba(200,200,210,0.70);")
+        self.lbl_track.setStyleSheet(
+            "font-size:12px; font-weight:700; color:#ffffff; letter-spacing:0.3px;"
+        )
+        self.lbl_track.setMaximumWidth(200)
 
-        right.addWidget(self.lbl_track)
-        right.addWidget(self.lbl_artist)
-        
+        self.lbl_artist = QLabel("Windows Media")
+        self.lbl_artist.setStyleSheet(
+            "font-size:10px; color:rgba(190,185,215,0.60); letter-spacing:0.2px;"
+        )
+        self.lbl_artist.setMaximumWidth(200)
+
+        info.addWidget(self.lbl_track)
+        info.addWidget(self.lbl_artist)
+        top.addLayout(info, 1)
+
+        # punto verde "live" / indicador de estado
+        self.dot = QLabel("●")
+        self.dot.setFixedSize(14, 14)
+        self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.50);")
+        top.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignTop)
+
+        root.addLayout(top)
+
+        # ── barra de progreso ─────────────────────────────────────────────────
+        self.prog_bar = QProgressBar()
+        self.prog_bar.setRange(0, 1000)
+        self.prog_bar.setValue(0)
+        self.prog_bar.setTextVisible(False)
+        self.prog_bar.setFixedHeight(3)
+        self.prog_bar.setStyleSheet('''
+QProgressBar {
+    background: rgba(255,255,255,0.07);
+    border: none;
+    border-radius: 2px;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 rgba(200,160,255,0.90),
+        stop:1 rgba(140,100,255,0.70));
+    border-radius: 2px;
+}
+''')
+        self.prog_bar.mousePressEvent = self._on_prog_click
+
+        self.lbl_time_l = QLabel("0:00")
+        self.lbl_time_l.setStyleSheet(
+            "font-size:8px; color:rgba(190,185,215,0.40); font-variant-numeric:tabular-nums;"
+        )
+        self.lbl_time_r = QLabel("0:00")
+        self.lbl_time_r.setStyleSheet(
+            "font-size:8px; color:rgba(190,185,215,0.40); font-variant-numeric:tabular-nums;"
+        )
+
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(6)
+        prog_row.setContentsMargins(0, 0, 0, 0)
+        prog_row.addWidget(self.lbl_time_l)
+        prog_row.addWidget(self.prog_bar, 1)
+        prog_row.addWidget(self.lbl_time_r)
+        root.addLayout(prog_row)
+
+        # ── controles centrados ───────────────────────────────────────────────
         ctrl = QHBoxLayout()
-        ctrl.setSpacing(10)
-        ctrl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        ctrl.setSpacing(4)
+        ctrl.setContentsMargins(0, 0, 0, 0)
+        ctrl.addStretch()
 
         if HAS_QTA:
             self.btn_prev = QPushButton()
-            self.btn_prev.setFixedSize(24, 24)
-            self.btn_prev.setIcon(qta.icon('fa5s.step-backward', color='rgba(220,220,230,0.85)'))
-            
+            self.btn_prev.setFixedSize(28, 28)
+            self.btn_prev.setIcon(
+                qta.icon('fa5s.step-backward', color='rgba(200,195,230,0.65)')
+            )
+            self.btn_prev.setIconSize(QSize(13, 13))
+
             self.btn_play = QPushButton()
-            self.btn_play.setFixedSize(28, 28)
-            self.btn_play.setIcon(qta.icon('fa5s.play', color='rgba(255,255,255,0.95)'))
-            
+            self.btn_play.setFixedSize(36, 36)
+            self.btn_play.setStyleSheet("""
+                QPushButton {
+                    background: rgba(180,138,255,0.18);
+                    border: 1px solid rgba(180,138,255,0.30);
+                    border-radius: 18px;
+                }
+                QPushButton:hover {
+                    background: rgba(180,138,255,0.28);
+                    border-color: rgba(180,138,255,0.55);
+                }
+                QPushButton:pressed {
+                    background: rgba(180,138,255,0.40);
+                }
+            """)
+            self.btn_play.setIcon(
+                qta.icon('fa5s.play', color='rgba(220,200,255,0.95)')
+            )
+            self.btn_play.setIconSize(QSize(14, 14))
+
             self.btn_next = QPushButton()
-            self.btn_next.setFixedSize(24, 24)
-            self.btn_next.setIcon(qta.icon('fa5s.step-forward', color='rgba(220,220,230,0.85)'))
+            self.btn_next.setFixedSize(28, 28)
+            self.btn_next.setIcon(
+                qta.icon('fa5s.step-forward', color='rgba(200,195,230,0.65)')
+            )
+            self.btn_next.setIconSize(QSize(13, 13))
 
             ctrl.addWidget(self.btn_prev)
             ctrl.addWidget(self.btn_play)
             ctrl.addWidget(self.btn_next)
-            
+
             self.btn_prev.clicked.connect(lambda: self._press("prevtrack"))
             self.btn_play.clicked.connect(lambda: self._press("playpause"))
             self.btn_next.clicked.connect(lambda: self._press("nexttrack"))
 
-        right.addLayout(ctrl)
-        layout.addLayout(right)
+        ctrl.addStretch()
+        root.addLayout(ctrl)
 
         self.hide()
         QTimer.singleShot(100, self.load_position)
+
+    # ── métodos ───────────────────────────────────────────────────────────────
+    def update_timeline(self, pos, dur):
+        self._dur = dur
+        self.prog_bar.setValue(int(pos / dur * 1000) if dur else 0)
+        self.lbl_time_l.setText(f"{pos//60}:{pos%60:02d}")
+        self.lbl_time_r.setText(f"{dur//60}:{dur%60:02d}")
+
+    def _on_prog_click(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._dur > 0:
+            val = int(event.position().x() / self.prog_bar.width() * self._dur)
+            self.seek_requested.emit(val)
 
     def update_info(self, title, artist, is_playing, thumb):
         if not title:
             self.lbl_track.setText("Not Playing")
             self.lbl_artist.setText("Windows Media")
+            self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.45);")
             self._is_playing = False
             return
 
         self._is_playing = is_playing
-        name = title[:30] + ("..." if len(title) > 30 else "")
-        art = artist[:30] + ("..." if len(artist) > 30 else "")
-        self.lbl_track.setText(name)
-        self.lbl_artist.setText(art)
+        self.lbl_track.setText(title[:28] + ("…" if len(title) > 28 else ""))
+        self.lbl_artist.setText(artist[:28] + ("…" if len(artist) > 28 else ""))
+
+        # punto de estado: verde si playing, gris si pausado
+        if is_playing:
+            self.dot.setStyleSheet("font-size:8px; color:rgba(80,220,120,0.80);")
+        else:
+            self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.45);")
 
         if HAS_QTA:
-            icon = 'fa5s.pause' if is_playing else 'fa5s.play'
-            self.btn_play.setIcon(qta.icon(icon, color='rgba(255,255,255,0.95)'))
+            icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
+            self.btn_play.setIcon(
+                qta.icon(icon_name, color='rgba(220,200,255,0.95)')
+            )
+            self.btn_play.setIconSize(QSize(14, 14))
 
     def _press(self, key):
         try:
@@ -1484,7 +1609,9 @@ QPushButton:hover {
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.drag_position = (
+                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            )
 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position is not None:
@@ -2186,10 +2313,10 @@ class SystemWidget(QWidget):
         super().mouseReleaseEvent(event)
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Dialogs: IlumMessageBox, LogsDialog, IlumColorPicker
+#  Dialogs: NexusMessageBox, LogsDialog, NexusColorPicker
 # ═══════════════════════════════════════════════════════════════════════════
 
-class IlumMessageBox(QDialog):
+class NexusMessageBox(QDialog):
     def __init__(self, parent, title, text, is_error=False):
         super().__init__(parent)
         self.setWindowTitle(title); self.setModal(True); self.setFixedSize(380, 160)
@@ -2222,7 +2349,7 @@ class IlumMessageBox(QDialog):
 class LogsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ILUM Logs"); self.setFixedSize(750, 500)
+        self.setWindowTitle("NEXUS Logs"); self.setFixedSize(750, 500)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.container = QWidget(self); self.container.setObjectName("logsContainer")
@@ -2234,7 +2361,7 @@ class LogsDialog(QDialog):
         self.lbl_icon = QLabel()
         if HAS_QTA: self.lbl_icon.setPixmap(qta.icon('fa5s.terminal', color=C_PRI).pixmap(18, 18))
         header.addWidget(self.lbl_icon)
-        self.lbl_title = QLabel("ILUM TELEMETRÍA Y LOGS")
+        self.lbl_title = QLabel("NEXUS TELEMETRÍA Y LOGS")
         self.lbl_title.setStyleSheet(f"color:{C_PRI};font-size:13px;font-weight:bold;letter-spacing:2px;background:transparent;")
         header.addWidget(self.lbl_title); header.addStretch()
         self.btn_close = QPushButton("×"); self.btn_close.setFixedSize(22, 22); self.btn_close.clicked.connect(self.accept)
@@ -2260,12 +2387,12 @@ class LogsDialog(QDialog):
     def load_logs(self):
         try:
             from memory.config_manager import BASE_DIR
-            log_file = BASE_DIR / "ilum.log"
-            if not log_file.exists(): log_file = Path("ilum.log")
+            log_file = BASE_DIR / "nexus.log"
+            if not log_file.exists(): log_file = Path("nexus.log")
             if log_file.exists():
                 with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                     self.raw_log_lines = f.readlines()
-            else: self.raw_log_lines = ["No se encontró 'ilum.log'."]
+            else: self.raw_log_lines = ["No se encontró 'nexus.log'."]
         except Exception as e: self.raw_log_lines = [f"Error: {e}"]
         self.filter_logs()
 
@@ -2278,7 +2405,7 @@ class LogsDialog(QDialog):
             esc = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if any(x in line.lower() for x in ("err", "exception", "fail")): c, fw = "#ff4d4d", "bold"
             elif "sys:" in line.lower(): c, fw = C_PRI, "bold"
-            elif "ilum:" in line.lower(): c, fw = "#00ff88", "normal"
+            elif "nexus:" in line.lower(): c, fw = "#00ff88", "normal"
             elif any(x in line.lower() for x in ("tú:", "tu:")): c, fw = "#00d4ff", "normal"
             else: c, fw = "#cbd5e1", "normal"
             html += f"<span style='color:{c};font-weight:{fw};'>{esc}</span><br>"
@@ -2293,10 +2420,10 @@ class LogsDialog(QDialog):
             self.move(event.globalPosition().toPoint() - self.drag_position)
 
 
-class IlumColorPicker(QDialog):
+class NexusColorPicker(QDialog):
     def __init__(self, parent=None, initial_color=None):
         super().__init__(parent)
-        self.setWindowTitle("ILUM Color Picker"); self.resize(380, 490)
+        self.setWindowTitle("NEXUS Color Picker"); self.resize(380, 490)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.selected_color = initial_color or QColor(C_PRI)
@@ -3916,7 +4043,7 @@ class DeviceSettingsDialog(QFrame):
         layout1 = card1.content_layout
         
         self.inp_ai_name = QLineEdit()
-        self.inp_ai_name.setPlaceholderText("I.L.U.M.")
+        self.inp_ai_name.setPlaceholderText("NEXUS")
         self.inp_ai_name.setMinimumHeight(40)
         layout1.addWidget(QLabel("Nombre de la IA:"), 0, 0)
         layout1.addWidget(self.inp_ai_name, 0, 1)
@@ -3958,7 +4085,7 @@ class DeviceSettingsDialog(QFrame):
         card3 = tab.add_card("MEMORIA A LARGO PLAZO", col_span=2)
         layout3 = card3.content_layout
         
-        self.btn_clear_memory = QPushButton("LIMPIAR MEMORIA DE ILUM")
+        self.btn_clear_memory = QPushButton("LIMPIAR MEMORIA DE NEXUS")
         self.btn_clear_memory.setFixedHeight(44)
         self.btn_clear_memory.setStyleSheet("""
             QPushButton {
@@ -3975,7 +4102,7 @@ class DeviceSettingsDialog(QFrame):
                 color: rgba(255,255,255,0.9);
             }
         """)
-        self.btn_clear_memory.clicked.connect(self._clear_ilum_memory)
+        self.btn_clear_memory.clicked.connect(self._clear_nexus_memory)
         layout3.addWidget(self.btn_clear_memory, 0, 0, 1, 2)
 
         self.stacked_widget.addWidget(tab)
@@ -4178,7 +4305,7 @@ class DeviceSettingsDialog(QFrame):
         if not hasattr(self, "_personalities_dict"):
             self._personalities_dict = {}
         if key in self._personalities_dict:
-            IlumMessageBox(self, "Error", f"Ya existe '{key}'.").exec()
+            NexusMessageBox(self, "Error", f"Ya existe '{key}'.").exec()
             return
         self._personalities_dict[key] = {"name": name.strip(), "prompt": "Describe aqui el comportamiento..."}
         self.cmb_personality.blockSignals(True)
@@ -4192,10 +4319,10 @@ class DeviceSettingsDialog(QFrame):
         if not key or not hasattr(self, "_personalities_dict") or key not in self._personalities_dict:
             return
         if key == "actual":
-            IlumMessageBox(self, "Error", "No se puede eliminar la personalidad original.").exec()
+            NexusMessageBox(self, "Error", "No se puede eliminar la personalidad original.").exec()
             return
         if self.cmb_personality.count() <= 1:
-            IlumMessageBox(self, "Error", "Debe quedar al menos una personalidad.").exec()
+            NexusMessageBox(self, "Error", "Debe quedar al menos una personalidad.").exec()
             return
         del self._personalities_dict[key]
         self.cmb_personality.blockSignals(True)
@@ -4327,7 +4454,7 @@ class DeviceSettingsDialog(QFrame):
         else:
             self.cmb_ollama_model.addItem(model_name, model_name)
             self.cmb_ollama_model.setCurrentText(model_name)
-        IlumMessageBox(self, "SUCCESS", f"Modelo {model_name.upper()} seleccionado.").exec()
+        NexusMessageBox(self, "SUCCESS", f"Modelo {model_name.upper()} seleccionado.").exec()
 
     def pull_ollama_model(self, model_name):
         self.start_pull(model_name)
@@ -4361,7 +4488,7 @@ class DeviceSettingsDialog(QFrame):
             self.lbl_progress_status.setText("DESCARGA COMPLETADA")
             self.bar_pull_progress.setValue(100)
             self.finish_pull()
-            IlumMessageBox(self, "SUCCESS", "DESCARGA DE MODELO COMPLETADA.").exec()
+            NexusMessageBox(self, "SUCCESS", "DESCARGA DE MODELO COMPLETADA.").exec()
         elif status == "success_installer":
             self.lbl_progress_status.setText("INSTALADOR ABIERTO")
             self.bar_pull_progress.setValue(100)
@@ -4371,7 +4498,7 @@ class DeviceSettingsDialog(QFrame):
             self.bar_pull_progress.setValue(0)
             self.finish_pull()
             if status == "error":
-                IlumMessageBox(self, "ERROR", f"Fallo: {error}", is_error=True).exec()
+                NexusMessageBox(self, "ERROR", f"Fallo: {error}", is_error=True).exec()
         else:
             self.lbl_progress_status.setText(f"{status.upper()}: {percent}%")
             self.bar_pull_progress.setValue(percent)
@@ -4393,7 +4520,7 @@ class DeviceSettingsDialog(QFrame):
     def pull_custom_model(self):
         model = self.inp_custom_model.text().strip()
         if not model:
-            IlumMessageBox(self, "WARNING", "Escribe un nombre de modelo válido.", is_error=True).exec()
+            NexusMessageBox(self, "WARNING", "Escribe un nombre de modelo válido.", is_error=True).exec()
             return
         self.start_pull(model)
 
@@ -4409,15 +4536,15 @@ class DeviceSettingsDialog(QFrame):
     def _open_color_picker(self):
         try:
             from shop import load_unlocks
-            from memory.ui_helpers import IlumMessageBox
+            from memory.ui_helpers import NexusMessageBox
             if not load_unlocks().get("neon_color", False):
-                IlumMessageBox(self, "Tienda ILUM", "Para usar colores de acento personalizados necesitas desbloquear el complemento 'Color Neón' en la tienda.").exec()
+                NexusMessageBox(self, "Tienda NEXUS", "Para usar colores de acento personalizados necesitas desbloquear el complemento 'Color Neón' en la tienda.").exec()
                 return
         except Exception as e:
             print("Error validating neon_color:", e)
 
         initial = QColor(self.custom_color_hex) if self.custom_color_hex else QColor("rgba(255,255,255,0.8)")
-        dialog = IlumColorPicker(self, initial)
+        dialog = NexusColorPicker(self, initial)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.custom_color_hex = dialog.selected_color.name()
             self.lbl_color_preview.setStyleSheet(
@@ -4442,9 +4569,9 @@ class DeviceSettingsDialog(QFrame):
     def _add_custom_font(self):
         try:
             from shop import load_unlocks
-            from memory.ui_helpers import IlumMessageBox
+            from memory.ui_helpers import NexusMessageBox
             if not load_unlocks().get("custom_fonts", False):
-                IlumMessageBox(self, "Tienda ILUM", "Para instalar tipografías desde archivos necesitas desbloquear el complemento 'Fuentes Premium' en la tienda.").exec()
+                NexusMessageBox(self, "Tienda NEXUS", "Para instalar tipografías desde archivos necesitas desbloquear el complemento 'Fuentes Premium' en la tienda.").exec()
                 return
         except Exception as e:
             print("Error validating custom_fonts:", e)
@@ -4468,9 +4595,9 @@ class DeviceSettingsDialog(QFrame):
             if fp.lower().endswith(".gif"):
                 try:
                     from shop import load_unlocks
-                    from memory.ui_helpers import IlumMessageBox
+                    from memory.ui_helpers import NexusMessageBox
                     if not load_unlocks().get("gif_wallpaper", False):
-                        IlumMessageBox(self, "Tienda ILUM", "Para usar fondos animados (GIF) necesitas desbloquear el complemento 'GIF Wallpaper' en la tienda.").exec()
+                        NexusMessageBox(self, "Tienda NEXUS", "Para usar fondos animados (GIF) necesitas desbloquear el complemento 'GIF Wallpaper' en la tienda.").exec()
                         return
                 except Exception as e:
                     print("Error validating gif_wallpaper:", e)
@@ -4498,8 +4625,8 @@ class DeviceSettingsDialog(QFrame):
         if path:
             self.inp_app_icon.setText(path)
 
-    def _clear_ilum_memory(self):
-        reply = QMessageBox.question(self, "Confirmar", "¿Borrar TODA la memoria de ILUM?",
+    def _clear_nexus_memory(self):
+        reply = QMessageBox.question(self, "Confirmar", "¿Borrar TODA la memoria de NEXUS?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
@@ -4697,13 +4824,13 @@ class DeviceSettingsDialog(QFrame):
         self.btn_spotify_login.setEnabled(True)
         self.lbl_spotify_status.setText("Conectado")
         self.lbl_spotify_status.setStyleSheet("color: rgba(29, 185, 84, 0.8); font-weight: bold;")
-        IlumMessageBox(self, "Spotify", "¡Autenticación exitosa!").exec()
+        NexusMessageBox(self, "Spotify", "¡Autenticación exitosa!").exec()
 
     def spotify_auth_failed(self, error):
         self.btn_spotify_login.setEnabled(True)
         self.lbl_spotify_status.setText("Error")
         self.lbl_spotify_status.setStyleSheet("color: rgba(255, 59, 48, 0.6); font-weight: bold;")
-        IlumMessageBox(self, "Error Spotify", f"Fallo: {error}", is_error=True).exec()
+        NexusMessageBox(self, "Error Spotify", f"Fallo: {error}", is_error=True).exec()
 
     # ── Load / Save ──────────────────────────────────────────────────────
 
@@ -4743,14 +4870,14 @@ class DeviceSettingsDialog(QFrame):
             self.inp_openrouter.setText(cfg.get("openrouter_api_key", ""))
             self.inp_openrouter_model.setText(cfg.get("openrouter_model", "google/gemini-2.5-flash"))
             self.inp_ai_name.setText(cfg.get("ai_name", ""))
-            self.inp_app_icon.setText(cfg.get("ilum_app_icon", ""))
+            self.inp_app_icon.setText(cfg.get("nexus_app_icon", ""))
 
             prov = cfg.get("ai_provider", "gemini")
             idx = self.cmb_ai_provider.findData(prov)
             if idx >= 0:
                 self.cmb_ai_provider.setCurrentIndex(idx)
 
-            voice = cfg.get("ilum_voice", "Aoede")
+            voice = cfg.get("nexus_voice", "Aoede")
             for i in range(self.cmb_voice.count()):
                 if self.cmb_voice.itemData(i) == voice:
                     self.cmb_voice.setCurrentIndex(i)
@@ -4763,8 +4890,8 @@ class DeviceSettingsDialog(QFrame):
             self.inp_ollama_url.setText(cfg.get("ollama_url", "http://127.0.0.1:11434"))
             self._active_ollama_model = cfg.get("ollama_model", "gemma2:2b")
 
-            theme = cfg.get("ilum_theme", "gold")
-            self.custom_color_hex = cfg.get("ilum_custom_theme_color", "")
+            theme = cfg.get("nexus_theme", "gold")
+            self.custom_color_hex = cfg.get("nexus_custom_theme_color", "")
             idx = self.cmb_theme.findData(theme)
             if idx >= 0:
                 self.cmb_theme.setCurrentIndex(idx)
@@ -4797,7 +4924,7 @@ class DeviceSettingsDialog(QFrame):
                     days_remaining = lic.get("days_remaining")
 
                     if key:
-                        # Mostrar la key ofuscada en el medio, ej: ILUM-7MZV-****-5J06
+                        # Mostrar la key ofuscada en el medio, ej: NEXUS-7MZV-****-5J06
                         parts = key.split("-")
                         if len(parts) >= 2:
                             masked_key = f"{parts[0]}-{parts[1]}-****-{parts[-1]}"
@@ -4866,7 +4993,7 @@ class DeviceSettingsDialog(QFrame):
 
             self.lbl_spotify_status.setText(self.check_spotify_auth_status())
 
-            ff = cfg.get("ilum_font_family", "Century Gothic")
+            ff = cfg.get("nexus_font_family", "Century Gothic")
             idx = self.cmb_font_family.findData(ff)
             if idx >= 0:
                 self.cmb_font_family.setCurrentIndex(idx)
@@ -4874,16 +5001,16 @@ class DeviceSettingsDialog(QFrame):
             self.sld_performance.setValue(int(cfg.get("performance_quality", 80)))
             self.chk_gpu.setChecked(cfg.get("gpu_acceleration", False))
 
-            self._custom_bg_color = cfg.get("ilum_bg_color", "")
-            self._custom_panel_color = cfg.get("ilum_panel_color", "")
-            self._custom_text_color = cfg.get("ilum_text_color", "")
-            self._custom_bg_image = cfg.get("ilum_bg_image", "")
-            self._custom_sticker_path = cfg.get("ilum_sticker_path", "")
+            self._custom_bg_color = cfg.get("nexus_bg_color", "")
+            self._custom_panel_color = cfg.get("nexus_panel_color", "")
+            self._custom_text_color = cfg.get("nexus_text_color", "")
+            self._custom_bg_image = cfg.get("nexus_bg_image", "")
+            self._custom_sticker_path = cfg.get("nexus_sticker_path", "")
 
-            bg_op = int(float(cfg.get("ilum_bg_opacity", 0.85)) * 100)
+            bg_op = int(float(cfg.get("nexus_bg_opacity", 0.85)) * 100)
             self.sld_bg_opacity.setValue(bg_op)
-            self.sld_sticker_w.setValue(int(cfg.get("ilum_sticker_w", 100)))
-            self.sld_sticker_h.setValue(int(cfg.get("ilum_sticker_h", 100)))
+            self.sld_sticker_w.setValue(int(cfg.get("nexus_sticker_w", 100)))
+            self.sld_sticker_h.setValue(int(cfg.get("nexus_sticker_h", 100)))
 
             # Cargar visibilidad de widgets
             self.chk_widget_spotify.setChecked(cfg.get("show_widget_spotify", False))
@@ -4941,7 +5068,7 @@ class DeviceSettingsDialog(QFrame):
             cfg = load_api_keys()
             cfg.update({
                 "ai_name": self.inp_ai_name.text().strip(),
-                "ilum_app_icon": self.inp_app_icon.text().strip(),
+                "nexus_app_icon": self.inp_app_icon.text().strip(),
                 "gemini_api_key": self.inp_gemini.text().strip(),
                 "openrouter_api_key": self.inp_openrouter.text().strip(),
                 "openrouter_model": self.inp_openrouter_model.text().strip(),
@@ -4953,9 +5080,9 @@ class DeviceSettingsDialog(QFrame):
                 "ollama_url": self.inp_ollama_url.text().strip(),
                 "ollama_model": self.cmb_ollama_model.currentText().strip(),
                 "performance_quality": self.sld_performance.value(),
-                "ilum_voice": self.cmb_voice.currentData(),
-                "ilum_theme": theme_val,
-                "ilum_custom_theme_color": custom_hex,
+                "nexus_voice": self.cmb_voice.currentData(),
+                "nexus_theme": theme_val,
+                "nexus_custom_theme_color": custom_hex,
                 "gpu_acceleration": self.chk_gpu.isChecked(),
                 "mic_device": self.cmb_mic.currentData(),
                 "mic_sensitivity": self.sld_mic_sens.value() / 10000.0,
@@ -4967,15 +5094,15 @@ class DeviceSettingsDialog(QFrame):
                 "spotify_client_id": self.inp_spotify_id.text().strip(),
                 "spotify_client_secret": self.inp_spotify_secret.text().strip(),
                 "spotify_redirect_uri": self.inp_spotify_uri.text().strip(),
-                "ilum_font_family": self.cmb_font_family.currentData(),
-                "ilum_bg_color": self._custom_bg_color,
-                "ilum_panel_color": self._custom_panel_color,
-                "ilum_text_color": self._custom_text_color,
-                "ilum_bg_image": self._custom_bg_image,
-                "ilum_bg_opacity": self.sld_bg_opacity.value() / 100.0,
-                "ilum_sticker_path": self._custom_sticker_path,
-                "ilum_sticker_w": self.sld_sticker_w.value(),
-                "ilum_sticker_h": self.sld_sticker_h.value(),
+                "nexus_font_family": self.cmb_font_family.currentData(),
+                "nexus_bg_color": self._custom_bg_color,
+                "nexus_panel_color": self._custom_panel_color,
+                "nexus_text_color": self._custom_text_color,
+                "nexus_bg_image": self._custom_bg_image,
+                "nexus_bg_opacity": self.sld_bg_opacity.value() / 100.0,
+                "nexus_sticker_path": self._custom_sticker_path,
+                "nexus_sticker_w": self.sld_sticker_w.value(),
+                "nexus_sticker_h": self.sld_sticker_h.value(),
                 "show_widget_spotify": self.chk_widget_spotify.isChecked(),
                 "show_widget_media": self.chk_widget_media.isChecked(),
                 "show_widget_weather": self.chk_widget_weather.isChecked(),
@@ -5004,10 +5131,10 @@ class DeviceSettingsDialog(QFrame):
                 QMessageBox.information(self, "OK", "Configuración guardada.")
                 self.accept()
             else:
-                IlumMessageBox(self, "OK", "Cambios aplicados.").exec()
+                NexusMessageBox(self, "OK", "Cambios aplicados.").exec()
 
         except Exception as e:
-            IlumMessageBox(self, "Error", f"Error al guardar: {e}", is_error=True).exec()
+            NexusMessageBox(self, "Error", f"Error al guardar: {e}", is_error=True).exec()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -5061,6 +5188,65 @@ class DeviceSettingsDialog(QFrame):
 #  MainWindow
 # ═══════════════════════════════════════════════════════════════════════════
 
+
+class EmbeddedBrowserDialog(QDialog):
+    def __init__(self, parent=None, url="https://google.com"):
+        super().__init__(parent)
+        self.setWindowTitle("NEXUS Web")
+        self.setFixedSize(1200, 800)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # Contenedor principal con fondo redondeado
+        container = QFrame(self)
+        container.setObjectName("WebContainer")
+        container.setStyleSheet('''
+            #WebContainer {
+                background: rgba(15, 15, 20, 0.95);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 12px;
+            }
+        ''')
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Barra superior con botón de cierre
+        top_bar = QHBoxLayout()
+        title = QLabel("NEXUS BROWSER")
+        title.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 14px; font-weight: bold; font-family: 'Segoe UI';")
+        
+        btn_close = QPushButton("YZ")
+        btn_close.setFixedSize(30, 30)
+        btn_close.setStyleSheet('''
+            QPushButton {
+                background: rgba(255, 60, 60, 0.8);
+                color: white;
+                border-radius: 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: rgba(255, 60, 60, 1);
+            }
+        ''')
+        btn_close.clicked.connect(self.close)
+
+        top_bar.addWidget(title)
+        top_bar.addStretch()
+        top_bar.addWidget(btn_close)
+        
+        c_layout.addLayout(top_bar)
+
+        # Vista Web
+        self.web = QWebEngineView()
+        self.web.setUrl(QUrl(url))
+        c_layout.addWidget(self.web)
+
+        layout.addWidget(container)
+
+
 class MainWindow(QMainWindow):
     _shutdown_sig = pyqtSignal()
     student_action_sig = pyqtSignal(str, dict)
@@ -5074,7 +5260,7 @@ class MainWindow(QMainWindow):
 
         self.resize(1150, 780) 
         self.setMinimumSize(850, 600)
-        self.setWindowTitle("ILUM-AI-HUD")
+        self.setWindowTitle("NEXUS-AI-HUD")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -5085,10 +5271,10 @@ class MainWindow(QMainWindow):
         try:
             from memory.config_manager import load_api_keys
             cfg = load_api_keys()
-            ci = cfg.get("ilum_app_icon", "")
+            ci = cfg.get("nexus_app_icon", "")
             if ci and Path(ci).exists(): self.setWindowIcon(QIcon(ci))
             else:
-                ip = get_bundled_path("assets", "ilum_icono.ico")
+                ip = get_bundled_path("assets", "nexus_icono.ico")
                 if ip.exists(): self.setWindowIcon(QIcon(str(ip)))
         except Exception: pass
 
@@ -5179,6 +5365,8 @@ class MainWindow(QMainWindow):
         # Media Monitor (YouTube)
         self.media_worker = MediaMonitorWorker(self)
         self.media_worker.media_updated.connect(self.media_float.update_info)
+        self.media_worker.timeline_updated.connect(self.media_float.update_timeline)
+        self.media_float.seek_requested.connect(self.media_worker.seek)
         self.media_worker.start()
 
         # Aplicar visibilidad inicial de widgets
@@ -5319,7 +5507,7 @@ class MainWindow(QMainWindow):
         chat_w = 300
         self.chat_bar.setFixedWidth(chat_w)
         self.chat_bar.setGeometry((W - chat_w) // 2, H - 114, chat_w, 44)
-        self.pro_badge.setGeometry(W - 85, H - 30, 80, 22)
+        self.pro_badge.setGeometry(W - 100, H - 30, 100, 22)
         self.txt_console.setGeometry(80, H - 168, W - 160, 50)
 
         # Posicionar widgets flotantes solo si no se han movido manualmente
@@ -5350,17 +5538,17 @@ class MainWindow(QMainWindow):
         try:
             from memory.config_manager import load_api_keys
             cfg = load_api_keys()
-            apply_theme_tokens(cfg.get("ilum_theme", "gold"), cfg.get("ilum_custom_theme_color", ""))
+            apply_theme_tokens(cfg.get("nexus_theme", "gold"), cfg.get("nexus_custom_theme_color", ""))
             global FONT_FAMILY
-            FONT_FAMILY = cfg.get("ilum_font_family", "Century Gothic")
+            FONT_FAMILY = cfg.get("nexus_font_family", "Century Gothic")
             QApplication.instance().setFont(QFont(FONT_FAMILY))
 
-            ai_name = cfg.get("ai_name", "").strip().upper() or "I.L.U.M"
+            ai_name = cfg.get("ai_name", "").strip().upper() or "◉ NEXUS"
             if "." not in ai_name and len(ai_name) > 1 and " " not in ai_name:
                 ai_name = ".".join(list(ai_name)) + "."
             self.pro_badge.update_text(ai_name)
 
-            bg_img = cfg.get("ilum_bg_image", "")
+            bg_img = cfg.get("nexus_bg_image", "")
             if bg_img and Path(bg_img).exists():
                 from PyQt6.QtGui import QPixmap, QMovie
                 from PyQt6.QtWidgets import QGraphicsOpacityEffect
@@ -5381,7 +5569,7 @@ class MainWindow(QMainWindow):
                         if hasattr(self, "_current_bg_movie"):
                             self._current_bg_movie = None
                 
-                oe = QGraphicsOpacityEffect(self); oe.setOpacity(float(cfg.get("ilum_bg_opacity", 0.85)))
+                oe = QGraphicsOpacityEffect(self); oe.setOpacity(float(cfg.get("nexus_bg_opacity", 0.85)))
                 self.lbl_bg_image.setGraphicsEffect(oe)
             else:
                 self.lbl_bg_image.clear(); self.lbl_bg_image.hide()
@@ -5389,10 +5577,10 @@ class MainWindow(QMainWindow):
                     self._current_bg_movie = None
 
             # Sticker
-            sticker_path = cfg.get("ilum_sticker_path", "")
+            sticker_path = cfg.get("nexus_sticker_path", "")
             self._sticker_path = sticker_path
-            self._sticker_w = int(cfg.get("ilum_sticker_w", 100))
-            self._sticker_h = int(cfg.get("ilum_sticker_h", 100))
+            self._sticker_w = int(cfg.get("nexus_sticker_w", 100))
+            self._sticker_h = int(cfg.get("nexus_sticker_h", 100))
             if sticker_path and Path(sticker_path).exists():
                 from PyQt6.QtGui import QPixmap
                 pix = QPixmap(sticker_path)
@@ -5448,7 +5636,7 @@ class MainWindow(QMainWindow):
 
     def _open_folder(self):
         try:
-            ruta = os.path.join(os.path.expanduser("~"), "Downloads", "Ilum_Downloads")
+            ruta = os.path.join(os.path.expanduser("~"), "Downloads", "Nexus_Downloads")
             os.makedirs(ruta, exist_ok=True); os.startfile(ruta)
         except Exception: pass
 
@@ -5597,7 +5785,7 @@ class MainWindow(QMainWindow):
     def _toggle_camera_gestures(self):
         if not hasattr(self, "_gesture_thread") or self._gesture_thread is None:
             try: import mediapipe
-            except ImportError: IlumMessageBox(self, "Piloto Gestual", "MediaPipe no instalado.", is_error=True).exec(); return
+            except ImportError: NexusMessageBox(self, "Piloto Gestual", "MediaPipe no instalado.", is_error=True).exec(); return
             try:
                 from actions.gesture_engine import GestureTrackingThread
                 cam_idx = 0
@@ -5607,7 +5795,7 @@ class MainWindow(QMainWindow):
                 except Exception: pass
                 self._gesture_thread = GestureTrackingThread(camera_index=cam_idx, theme_bgr=hex_to_bgr(C_PRI), text_bgr=hex_to_bgr(C_TEXT))
                 self._gesture_thread.start()
-            except Exception as e: IlumMessageBox(self, "Error", f"Error al iniciar cámara:\n{e}", is_error=True).exec(); return
+            except Exception as e: NexusMessageBox(self, "Error", f"Error al iniciar cámara:\n{e}", is_error=True).exec(); return
         if self.camera_window is None:
             self.camera_window = CameraPreviewWindow(shared_thread=self._gesture_thread, parent=None)
             self.camera_window.attach_thread(self._gesture_thread)
@@ -5650,7 +5838,7 @@ class MainWindow(QMainWindow):
     def _setup_tray_icon(self):
         from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
         self.tray_icon = QSystemTrayIcon(self)
-        ip = get_bundled_path("assets", "ilum_icono.ico")
+        ip = get_bundled_path("assets", "nexus_icono.ico")
         if ip.exists(): self.tray_icon.setIcon(QIcon(str(ip)))
         else:
             from PyQt6.QtWidgets import QStyle
@@ -5689,7 +5877,7 @@ class MainWindow(QMainWindow):
             event.ignore(); self.hide()
             if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
                 from PyQt6.QtWidgets import QSystemTrayIcon
-                self.tray_icon.showMessage("ILUM AI", "Sigo activo en segundo plano.",
+                self.tray_icon.showMessage("NEXUS AI", "Sigo activo en segundo plano.",
                     QSystemTrayIcon.MessageIcon.Information, 3000)
 
     def _get_resize_edge(self, pos):
@@ -5796,7 +5984,7 @@ class MainWindow(QMainWindow):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  MockRoot + IlumUI
+#  MockRoot + NexusUI
 # ═══════════════════════════════════════════════════════════════════════════
 
 class MockRoot:
@@ -5806,7 +5994,7 @@ class MockRoot:
     def after(self, ms: int, func): QTimer.singleShot(ms, func)
 
 
-class IlumUI:
+class NexusUI:
     def __init__(self, face_path=""):
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
@@ -5816,7 +6004,7 @@ class IlumUI:
         self.on_text_command = None
         self.on_stop_command = None
         self.on_config_saved = None
-        self.ilum_response_buffer = ""
+        self.nexus_response_buffer = ""
         self.last_user_message = ""
         self._win = MainWindow(self, face_path)
         self._win.show(); self._win.raise_(); self._win.activateWindow()
@@ -5835,17 +6023,17 @@ class IlumUI:
         print(text)
         def _update():
             if text.startswith("SYS:") or text.startswith("ERR:") or text.startswith("⚡"):
-                self.ilum_response_buffer = ""; self._win.txt_console.setText(text)
+                self.nexus_response_buffer = ""; self._win.txt_console.setText(text)
             elif text.startswith("Tú:"):
                 self.last_user_message = text
                 disp = self.last_user_message
-                if self.ilum_response_buffer: disp += f"\nILUM: {self.ilum_response_buffer}"
+                if self.nexus_response_buffer: disp += f"\nNEXUS: {self.nexus_response_buffer}"
                 self._win.txt_console.setText(disp)
-            elif text.startswith("ILUM:"):
-                clean = text.replace("ILUM:", "").strip()
+            elif text.startswith("NEXUS:"):
+                clean = text.replace("NEXUS:", "").strip()
                 if clean:
-                    self.ilum_response_buffer = clean
-                    disp = f"ILUM: {self.ilum_response_buffer}"
+                    self.nexus_response_buffer = clean
+                    disp = f"NEXUS: {self.nexus_response_buffer}"
                     if self.last_user_message: disp = f"{self.last_user_message}\n{disp}"
                     self._win.txt_console.setText(disp)
             else:
@@ -5862,19 +6050,19 @@ class IlumUI:
 
     def set_audio_level(self, level: float): self._win.orb.set_audio(level)
 
-    def clear_ilum_response(self):
+    def clear_nexus_response(self):
         def _do():
-            self.ilum_response_buffer = ""
+            self.nexus_response_buffer = ""
             self._win.txt_console.setText(self.last_user_message if self.last_user_message else "")
         QTimer.singleShot(0, _do)
 
-    def stream_ilum_chunk(self, chunk: str):
+    def stream_nexus_chunk(self, chunk: str):
         def _do():
-            text = chunk.replace("ILUM:", "").strip()
+            text = chunk.replace("NEXUS:", "").strip()
             if text:
-                if self.ilum_response_buffer: self.ilum_response_buffer += " " + text
-                else: self.ilum_response_buffer = text
-                disp = f"ILUM: {self.ilum_response_buffer}"
+                if self.nexus_response_buffer: self.nexus_response_buffer += " " + text
+                else: self.nexus_response_buffer = text
+                disp = f"NEXUS: {self.nexus_response_buffer}"
                 if self.last_user_message: disp = f"{self.last_user_message}\n{disp}"
                 self._win.txt_console.setText(disp)
         QTimer.singleShot(0, _do)
@@ -5900,10 +6088,10 @@ class IlumUI:
             appdata = os.getenv('APPDATA')
             if not appdata: return
             startup_dir = os.path.join(appdata, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
-            shortcut_path = os.path.join(startup_dir, 'ILUM AI.lnk')
+            shortcut_path = os.path.join(startup_dir, 'NEXUS AI.lnk')
             current_dir = os.path.abspath(os.path.dirname(__file__))
-            target_vbs = os.path.join(current_dir, "Iniciar ILUM Beta.vbs")
-            icon_path = os.path.join(current_dir, "assets", "ilum_icono.ico")
+            target_vbs = os.path.join(current_dir, "Iniciar NEXUS Beta.vbs")
+            icon_path = os.path.join(current_dir, "assets", "nexus_icono.ico")
             if not os.path.exists(target_vbs): return
             ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}');"
                   f"$s.TargetPath='{target_vbs}';$s.WorkingDirectory='{current_dir}';"
@@ -6034,7 +6222,7 @@ class ApaVerifyWorker(QThread):
 class StudentModeWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ILUM — Herramientas Académicas")
+        self.setWindowTitle("NEXUS — Herramientas Académicas")
         self.resize(850, 600); self.setMinimumSize(800, 550)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -6236,7 +6424,7 @@ class StudentModeWindow(QDialog):
     def download_apa_report(self):
         try:
             from memory.config_manager import BASE_DIR; import time, os
-            d = os.path.join(BASE_DIR, "Descargas_Ilum"); os.makedirs(d, exist_ok=True)
+            d = os.path.join(BASE_DIR, "Descargas_Nexus"); os.makedirs(d, exist_ok=True)
             fp = os.path.join(d, f"APA_{int(time.time())}.txt")
             with open(fp, "w", encoding="utf-8") as f: f.write(self.apa_output.toPlainText())
             QMessageBox.information(self, "OK", f"Guardado en:\n{d}"); os.startfile(d)
@@ -6245,7 +6433,7 @@ class StudentModeWindow(QDialog):
     def download_quality_report(self):
         try:
             from memory.config_manager import BASE_DIR; import time, os
-            d = os.path.join(BASE_DIR, "Descargas_Ilum"); os.makedirs(d, exist_ok=True)
+            d = os.path.join(BASE_DIR, "Descargas_Nexus"); os.makedirs(d, exist_ok=True)
             fp = os.path.join(d, f"Calidad_{int(time.time())}.html")
             with open(fp, "w", encoding="utf-8") as f: f.write(self.quality_output.toHtml())
             QMessageBox.information(self, "OK", f"Guardado en:\n{d}"); os.startfile(d)

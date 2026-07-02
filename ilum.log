@@ -19,5 +19,6 @@ SYS: ILUM en línea.
 [ILUM] 🎤 Mic stream open
 [ILUM] 👂 Recv iniciado
 [ILUM] 🔊 Play iniciado
+[TZ] Timezone loaded: America/Bogota
 [DRM Security] Firma criptográfica verificada con éxito.
 [Supabase Client] Validación online completada: Licencia validada y registrada correctamente.

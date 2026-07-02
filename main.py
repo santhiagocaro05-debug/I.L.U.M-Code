@@ -57,7 +57,7 @@ if _gpu_enabled:
     # Enable hardware acceleration backends for Qt
     os.environ["QSG_RHI_BACKEND"] = "d3d11" # Force Direct3D 11 for hardware rendering on Windows
     os.environ["QSG_INFO"] = "1"
-    print("[ILUM] GPU Acceleration is ENABLED. Offloading RAM rendering workload to GPU.")
+    print("[NEXUS] GPU Acceleration is ENABLED. Offloading RAM rendering workload to GPU.")
 else:
     # Balanced low-RAM mode: Keep GPU hardware compositing enabled so glowing CSS effects and drop-shadows are rendered beautifully, but limit renderer processes and JS space size.
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
@@ -71,7 +71,7 @@ else:
         "--disable-sync "
         "--mute-audio"
     )
-    print("[ILUM] Using Balanced Low RAM GPU-Composited mode for beautiful fluid rendering.")
+    print("[NEXUS] Using Balanced Low RAM GPU-Composited mode for beautiful fluid rendering.")
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -120,9 +120,9 @@ def play_mp3_sound(sound_name: str):
                 # Cleanup list occasionally to prevent memory leak
                 if len(_playing_sounds) > 10:
                     _playing_sounds.pop(0)
-            print(f"[ILUM] Reproduciendo sonido: {sound_name}")
+            print(f"[NEXUS] Reproduciendo sonido: {sound_name}")
         else:
-            print(f"[ILUM] Archivo de sonido no encontrado: {file_path}")
+            print(f"[NEXUS] Archivo de sonido no encontrado: {file_path}")
     except Exception as e:
         print(f"Error playing {sound_name}: {e}")
 
@@ -130,7 +130,7 @@ import traceback
 from pathlib import Path
 
 # ── Dedicated thread pool for tool execution — prevents starvation ────────────
-_TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ilum-tool")
+_TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="nexus-tool")
 
 try:
     from zoneinfo import ZoneInfo as _ZoneInfo
@@ -182,7 +182,7 @@ import numpy as np # descargar numpy xd
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from ui import IlumUI
+from ui import NexusUI
 
 def _patch_settings_ui():
     pass
@@ -510,7 +510,7 @@ BASE_DIR        = get_base_dir()
 RUNTIME_DIR     = get_runtime_dir()
 API_CONFIG_PATH = RUNTIME_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LOG_PATH        = RUNTIME_DIR / "ilum.log"
+LOG_PATH        = RUNTIME_DIR / "nexus.log"
 
 # ── Redirect output to log file (pythonw.exe has no console) ─
 try:
@@ -559,21 +559,21 @@ def _get_api_key() -> str:
     return _cached_api_key
 
 
-ILUM_VOICES = {
+NEXUS_VOICES = {
     "Aoede":  ("Femenina", "Cálida y sofisticada — ideal para asistente IA"),
     "Kore":   ("Femenina", "Suave y precisa"),
     "Leda":   ("Femenina", "Natural y fluida"),
     "Zephyr": ("Femenina", "Dinámica y expresiva"),
-    "Charon": ("Masculina", "Profunda y seria — voz original de ILUM"),
+    "Charon": ("Masculina", "Profunda y seria — voz original de NEXUS"),
     "Puck":   ("Masculina", "Ágil y versátil"),
     "Fenrir": ("Masculina", "Grave y autoritaria"),
     "Orus":   ("Masculina", "Clásica y equilibrada"),
 }
 
-def _get_ilum_voice() -> str:
+def _get_nexus_voice() -> str:
     try:
         cfg = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-        return cfg.get("ilum_voice", "Aoede")
+        return cfg.get("nexus_voice", "Aoede")
     except Exception:
         return "Aoede"
 
@@ -600,9 +600,9 @@ def _load_system_prompt() -> str:
                         # CRITICAL SYSTEM OVERRIDE: Prepend at the absolute top of the system prompt
                         override_top = (
                             f"# CRITICAL SYSTEM INSTRUCTION OVERRIDE: ACTIVE PERSONALITY = {active_pers['name'].upper()}\n"
-                            f"Ignora cualquier instrucción posterior en este prompt sobre actuar como 'británico seco', 'sarcástico' o usar respuestas secas de ILUM clásico si contradicen tu personalidad activa.\n"
+                            f"Ignora cualquier instrucción posterior en este prompt sobre actuar como 'británico seco', 'sarcástico' o usar respuestas secas de NEXUS clásico si contradicen tu personalidad activa.\n"
                             f"Tu personalidad, tono de voz y actitud para esta sesión son: {active_pers['prompt']}\n"
-                            f"Asegúrate de que cada una de tus respuestas y comentarios refleje al 100% esta personalidad activa. No uses el humor original seco ni las frases cortas del ILUM tradicional.\n"
+                            f"Asegúrate de que cada una de tus respuestas y comentarios refleje al 100% esta personalidad activa. No uses el humor original seco ni las frases cortas del NEXUS tradicional.\n"
                             f"============================================================\n\n"
                         )
                         prompt_text = override_top + prompt_text
@@ -610,7 +610,7 @@ def _load_system_prompt() -> str:
                         # Append confirmation directive at the bottom
                         prompt_text += (
                             f"\n\n## DIRECTIVA DE PERSONALIDAD OBLIGATORIA ({active_pers['name'].upper()})\n"
-                            f"REGLA DE ORO: Tienes prohibido actuar como el ILUM clásico (británico seco/sarcástico). Debes adoptar estrictamente este rol: {active_pers['prompt']}\n"
+                            f"REGLA DE ORO: Tienes prohibido actuar como el NEXUS clásico (británico seco/sarcástico). Debes adoptar estrictamente este rol: {active_pers['prompt']}\n"
                             f"Adapta tus comentarios de humor, explicaciones y respuestas a esta personalidad activa en todo momento."
                         )
                     else:
@@ -624,8 +624,8 @@ def _load_system_prompt() -> str:
             ai_name = cfg.get("ai_name", "I.L.U.M.").strip()
             if user_name:
                 prompt_text += f"\n\n## PERSONALIZACIÓN DEL USUARIO\nEl nombre del usuario es '{user_name}'. Dirígete a él como '{user_name}' (o variantes cortas respetuosas como 'señor {user_name}') de manera leal y natural en cada interacción, a menos que él te pida explícitamente cambiar su nombre."
-            if ai_name and ai_name.upper() != "ILUM":
-                prompt_text += f"\n\n## DIRECTIVA DE IDENTIDAD (IMPORTANTE)\nTu nombre ha sido reasignado oficialmente a '{ai_name}'. Eres el ecosistema inteligente {ai_name}, y debes presentarte y referirte a ti mismo exclusivamente como {ai_name}, NO como ILUM."
+            if ai_name and ai_name.upper() != "NEXUS":
+                prompt_text += f"\n\n## DIRECTIVA DE IDENTIDAD (IMPORTANTE)\nTu nombre ha sido reasignado oficialmente a '{ai_name}'. Eres el ecosistema inteligente {ai_name}, y debes presentarte y referirte a ti mismo exclusivamente como {ai_name}, NO como NEXUS."
         except Exception:
             pass
         return prompt_text
@@ -734,7 +734,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "camera_bus",
         "description": (
-            "Controla el subsistema de pilotaje y navegación gestual por cámara de ILUM. "
+            "Controla el subsistema de pilotaje y navegación gestual por cámara de NEXUS. "
             "Permite activar, desactivar o alternar el control gestual del mouse usando la webcam en segundo plano."
         ),
         "parameters": {
@@ -749,9 +749,9 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "ilum_ui_control",
+        "name": "nexus_ui_control",
         "description": (
-            "Control total sobre la ventana principal y los widgets de la interfaz de ILUM. "
+            "Control total sobre la ventana principal y los widgets de la interfaz de NEXUS. "
             "Permite minimizar/restaurar la ventana principal, o abrir, cerrar, alternar la visibilidad de cualquier widget del dashboard.\n"
             "Widgets disponibles: weather (clima), spotify (música), system (sistema), "
             "notes (notas), todo (tareas), maps (mapas), image (imágenes), camera (cámara)."
@@ -1025,7 +1025,7 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "url": { "type": "STRING", "description": "URL del video. Opcional: si está vacío, ILUM lo extraerá automáticamente del navegador activo." },
+                "url": { "type": "STRING", "description": "URL del video. Opcional: si está vacío, NEXUS lo extraerá automáticamente del navegador activo." },
                 "opcion": { "type": "STRING", "description": "'1' para Video, '2' para Solo Audio (MP3)." },
                 "calidad": { "type": "STRING", "description": "Para video: '1' (144p) a '6' (Maxima calidad)." }
             },
@@ -1468,11 +1468,11 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "shutdown_ilum",
+        "name": "shutdown_nexus",
         "description": (
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Ilum. "
+            "close the assistant, say goodbye, or stop NEXUS. "
             "The user can say this in ANY language."
         ),
         "parameters": {
@@ -1683,7 +1683,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Muestra rutas de navegación y mapas interactivos. "
             "Usar para: cómo llegar a un lugar, cuánto tarda, indicaciones paso a paso, "
-            "buscar una dirección en el mapa. Abre mapa ILUM en Chrome con la ruta marcada. "
+            "buscar una dirección en el mapa. Abre mapa NEXUS en Chrome con la ruta marcada. "
             "SIEMPRE llamar para cualquier pedido de navegación, rutas o mapas."
         ),
         "parameters": {
@@ -1746,7 +1746,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Perfil dinámico del usuario — hábitos, preferencias, historial de uso. "
             "Ver perfil, configurar preferencias, ver hábitos aprendidos, guardar notas personales. "
-            "ILUM aprende automáticamente los patrones del usuario."
+            "NEXUS aprende automáticamente los patrones del usuario."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -1846,7 +1846,7 @@ TOOL_DECLARATIONS = [
                 "title":    {"type": "STRING", "description": "Título de la entrada"},
                 "content":  {"type": "STRING", "description": "Contenido o texto a guardar"},
                 "type":     {"type": "STRING", "description": "note | idea | snippet | reference | fact | task | question"},
-                "tags":     {"type": "STRING", "description": "Tags separados por coma (ej: python, ilum, idea)"},
+                "tags":     {"type": "STRING", "description": "Tags separados por coma (ej: python, nexus, idea)"},
                 "query":    {"type": "STRING", "description": "Búsqueda en la base de conocimiento"},
                 "entry_id": {"type": "STRING", "description": "ID de la entrada para get/update/delete"},
                 "path":     {"type": "STRING", "description": "Ruta para exportar (action=export)"},
@@ -2023,7 +2023,7 @@ TOOL_DECLARATIONS = [
             "Usa Pollinations.ai (gratis, open-source, sin API key) o Gemini. "
             "SIEMPRE llamar cuando el usuario pide 'generame una imagen', 'crea una foto de', "
             "'dibujame', 'haceme una imagen', 'quiero una foto de', o 'mostrame', etc. "
-            "Después de generar, la imagen se muestra automáticamente en el widget de ILUM."
+            "Después de generar, la imagen se muestra automáticamente en el widget de NEXUS."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -2031,7 +2031,7 @@ TOOL_DECLARATIONS = [
                 "prompt":       {"type": "STRING",  "description": "Descripción detallada de la imagen a generar"},
                 "count":        {"type": "INTEGER", "description": "Cantidad de imágenes (1-4, default: 1)"},
                 "aspect_ratio": {"type": "STRING",  "description": "Relación de aspecto: 1:1 | 4:3 | 3:4 | 16:9 | 9:16 (default: 1:1)"},
-                "save_path":    {"type": "STRING",  "description": "Carpeta de guardado (default: ~/Pictures/ILUM_Generadas)"},
+                "save_path":    {"type": "STRING",  "description": "Carpeta de guardado (default: ~/Pictures/NEXUS_Generadas)"},
             },
             "required": ["prompt"]
         }
@@ -2293,7 +2293,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "screen_vision",
         "description": (
-            "ILUM puede VER la pantalla del usuario. Captura lo que está en el monitor "
+            "NEXUS puede VER la pantalla del usuario. Captura lo que está en el monitor "
             "y usa IA (Gemini Vision) para describirlo, responder preguntas, leer texto, "
             "o dar ayuda contextual basada en lo que se está mostrando.\n"
             "SIEMPRE usar cuando el usuario diga: '¿qué estoy viendo?', '¿qué hay en mi pantalla?', "
@@ -2323,10 +2323,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "morning_brief",
         "description": (
-            "Genera el informe matutino inteligente de ILUM. "
+            "Genera el informe matutino inteligente de NEXUS. "
             "Incluye saludo personalizado, hora, fecha, clima actual, objetivos activos y consejo del día. "
             "Usar cuando el usuario pida: 'informe del día', 'brief matutino', 'qué hay hoy', "
-            "'resumen del día', 'buenos días ILUM', o al iniciar el día."
+            "'resumen del día', 'buenos días NEXUS', o al iniciar el día."
         ),
         "parameters": {
             "type": "object",
@@ -2342,7 +2342,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "vision_guardian",
         "description": (
-            "Controla el Guardian de Visión Ambiental de ILUM — monitoreo proactivo de pantalla. "
+            "Controla el Guardian de Visión Ambiental de NEXUS — monitoreo proactivo de pantalla. "
             "Analiza la pantalla periódicamente con IA y ofrece ayuda contextual cuando detecta algo relevante. "
             "Usar cuando el usuario diga: 'activa el guardian', 'desactiva el guardian', "
             "'vigila mi pantalla', 'deja de vigilar', 'analiza mi pantalla ahora', "
@@ -2367,7 +2367,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "accessibility_overlay",
         "description": (
-            "Muestra, oculta o alterna la barra flotante de accesibilidad ILUM sobre el escritorio. "
+            "Muestra, oculta o alterna la barra flotante de accesibilidad NEXUS sobre el escritorio. "
             "USAR cuando el usuario diga: 'mostrar barra de accesibilidad', 'abrir panel de accesibilidad', "
             "'activar barra para ciegos', 'cerrar barra', 'ocultar barra de accesibilidad', "
             "'alternar barra', 'barra de accesibilidad'."
@@ -2470,7 +2470,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "tool_creator",
         "description": (
-            "Permite a ILUM programar e instalar sus propias herramientas. "
+            "Permite a NEXUS programar e instalar sus propias herramientas. "
             "ÚSALO SIEMPRE que el usuario te pida que aprendas a hacer algo nuevo, o si necesitas una funcionalidad que no tienes preinstalada. "
             "Escribirás el código Python y se instalará automáticamente."
         ),
@@ -2624,7 +2624,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "auto_programmer",
         "description": (
-            "Suite de desarrollo y auto-programación autónoma avanzada. Permite a ILUM escribir "
+            "Suite de desarrollo y auto-programación autónoma avanzada. Permite a NEXUS escribir "
             "código Python para nuevas herramientas, validar sintaxis con py_compile, correr tests sintácticos "
             "en un sandbox con traceback detallado, corregir errores e inyectar plugins en caliente."
         ),
@@ -2662,11 +2662,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "self_edit",
         "description": (
-            "Auto-edición de código: ILUM puede leer, modificar, crear y gestionar sus propios archivos de código fuente. "
+            "Auto-edición de código: NEXUS puede leer, modificar, crear y gestionar sus propios archivos de código fuente. "
             "Crea backups automáticos antes de cada cambio. "
             "USAR cuando el usuario pida: 'editá tu código', 'cambiá tu prompt', 'agregá esta función', "
             "'modificá tu comportamiento', 'mejorate', 'aprendé a hacer X editando tu código', "
-            "o cuando ILUM necesite auto-mejorarse, corregir bugs propios o agregar capacidades. "
+            "o cuando NEXUS necesite auto-mejorarse, corregir bugs propios o agregar capacidades. "
             "Puede editar: main.py, core/prompt.txt, actions/*.py, config/*, o cualquier archivo del proyecto."
         ),
         "parameters": {
@@ -2726,9 +2726,9 @@ try:
 except Exception as _e:
     pass
 
-class IlumLive:
+class NexusLive:
 
-    def __init__(self, ui: IlumUI):
+    def __init__(self, ui: NexusUI):
         # ── CONTROL DE INTEGRIDAD DRM EN CALIENTE ───────────────────────────
         from hashlib import sha256
         import drm_manager
@@ -2745,7 +2745,7 @@ class IlumLive:
                 except:
                     pass
         
-        expected_token = sha256(f"{_key_to_check}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest() if _key_to_check else ""
+        expected_token = sha256(f"{_key_to_check}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest() if _key_to_check else ""
         if not expected_token or _session_drm_token != expected_token:
             print("[DRM Security] Violación de integridad del inicio de sesión. Bloqueado.")
             os._exit(0)
@@ -2770,19 +2770,19 @@ class IlumLive:
         self._fish_api_key       = cfg_keys.get("fish_api_key", "")
         self._fish_voice_id      = cfg_keys.get("fish_voice_id", "")
         if self._fish_audio_enabled and self._fish_api_key and self._fish_voice_id:
-            print(f"[ILUM] 🐟 Fish Audio habilitado (Voice ID: {self._fish_voice_id[:8]}...)")
+            print(f"[NEXUS] 🐟 Fish Audio habilitado (Voice ID: {self._fish_voice_id[:8]}...)")
         # ────────────────────────────────────────────────────────────────────
 
         # ── Clonación de Voz Local (XTTS-v2) — opcional ──────────────────────
         self._local_tts_enabled = cfg_keys.get("local_tts_enabled", False)
         self._local_tts = None
         if self._local_tts_enabled:
-            print("[ILUM] 🎙️ Clonación de Voz Local (XTTS-v2) habilitada. Inicializando motor...")
+            print("[NEXUS] 🎙️ Clonación de Voz Local (XTTS-v2) habilitada. Inicializando motor...")
             try:
                 from tts_engine import get_engine
                 self._local_tts = get_engine()
             except Exception as e:
-                print(f"[ILUM] Error cargando tts_engine: {e}")
+                print(f"[NEXUS] Error cargando tts_engine: {e}")
         # ────────────────────────────────────────────────────────────────────
 
         self.vosk_recognizer = None
@@ -2804,16 +2804,16 @@ class IlumLive:
                 if spk_path.exists():
                     spk_model = vosk.SpkModel(str(spk_path))
                     self.vosk_interrupt_recognizer = vosk.KaldiRecognizer(model, 16000, spk_model)
-                    print("[ILUM] Modelo Vosk + Speaker ID biométrico cargados.")
+                    print("[NEXUS] Modelo Vosk + Speaker ID biométrico cargados.")
                 else:
                     self.vosk_interrupt_recognizer = vosk.KaldiRecognizer(model, 16000)
-                    print("[ILUM] Modelo Vosk cargado (sin biometría).")
+                    print("[NEXUS] Modelo Vosk cargado (sin biometría).")
             else:
-                print(f"[ILUM] No se encontró el modelo Vosk en {vosk_path}")
+                print(f"[NEXUS] No se encontró el modelo Vosk en {vosk_path}")
         except Exception as e:
-            print(f"[ILUM] No se pudo cargar Vosk: {e}")
+            print(f"[NEXUS] No se pudo cargar Vosk: {e}")
         self.audio_in_queue = None
-        # Iniciar scheduler y motor de reglas en background al arrancar ILUM
+        # Iniciar scheduler y motor de reglas en background al arrancar NEXUS
         start_runner(player=ui, speak=None)
         start_rules_runner(player=ui, speak=None)
         self._load_speaker_profile()
@@ -2865,22 +2865,22 @@ class IlumLive:
         self._fish_api_key       = cfg.get("fish_api_key", "")
         self._fish_voice_id      = cfg.get("fish_voice_id", "")
         if self._fish_audio_enabled:
-            print(f"[ILUM] 🐟 Fish Audio {'activado' if self._fish_api_key else 'activado pero sin API Key'}")
+            print(f"[NEXUS] 🐟 Fish Audio {'activado' if self._fish_api_key else 'activado pero sin API Key'}")
         # ────────────────────────────────────────────────────────────────────
         
         # ── Recargar configuración de Voz Local XTTS-v2 ──────────────────
         self._local_tts_enabled = cfg.get("local_tts_enabled", False)
         if self._local_tts_enabled and self._local_tts is None:
-            print("[ILUM] 🎙️ Clonación de Voz Local (XTTS-v2) activada. Inicializando motor...")
+            print("[NEXUS] 🎙️ Clonación de Voz Local (XTTS-v2) activada. Inicializando motor...")
             try:
                 from tts_engine import get_engine
                 self._local_tts = get_engine()
             except Exception as e:
-                print(f"[ILUM] Error cargando tts_engine: {e}")
+                print(f"[NEXUS] Error cargando tts_engine: {e}")
         # ────────────────────────────────────────────────────────────────────
         
         self.update_wake_words(cfg)
-        print("[ILUM] ⚙️ Config actualizada — reconectando sesión...")
+        print("[NEXUS] ⚙️ Config actualizada — reconectando sesión...")
         self.ui.write_log("SYS: Aplicando nueva configuración...")
         if self._reconnect_event and self._loop:
             self._loop.call_soon_threadsafe(self._reconnect_event.set)
@@ -2962,7 +2962,7 @@ class IlumLive:
             time.sleep(10)
             if time.time() - getattr(self, 'last_activity', time.time()) > 300: # 5 minutos (300 segundos)
                 if not getattr(self, '_meditation_playing', False):
-                    print("[ILUM] Iniciando estado de meditación...")
+                    print("[NEXUS] Iniciando estado de meditación...")
                     play_mp3_sound("meditacion")
                     self._meditation_playing = True
             else:
@@ -3003,10 +3003,10 @@ class IlumLive:
             try:
                 data = json.loads(spk_path.read_text("utf-8"))
                 self.master_speaker_vector = data.get("vector")
-                print(f"[ILUM] Perfil biométrico de voz maestro cargado.")
+                print(f"[NEXUS] Perfil biométrico de voz maestro cargado.")
             except Exception as e:
-                print(f"[ILUM] Error leyendo perfil biométrico: {e}")
-                
+                print(f"[NEXUS] Error leyendo perfil biométrico: {e}")
+
     def _is_unauthorized_speaker(self, current_vector):
         if not self.master_speaker_vector or not current_vector:
             return False
@@ -3034,7 +3034,7 @@ class IlumLive:
                 try:
                     import winsound
                     import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderIlum.wav")
+                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
                     winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
                 except: pass
             else:
@@ -3045,7 +3045,7 @@ class IlumLive:
                 try:
                     import winsound
                     import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderIlum.wav")
+                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
                     winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
                 except: pass
                 if getattr(self, "audio_in_queue", None):
@@ -3078,16 +3078,16 @@ class IlumLive:
                 try:
                     import winsound
                     import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderIlum.wav")
+                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
                     winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
                 except: pass
             else:
-                assigned_name = "ILUM"
+                assigned_name = "NEXUS"
                 try:
                     import json, os
                     if os.path.exists("config/api_keys.json"):
                         with open("config/api_keys.json", "r", encoding="utf-8") as f:
-                            assigned_name = json.load(f).get("ai_name", "ILUM").strip() or "ILUM"
+                            assigned_name = json.load(f).get("ai_name", "NEXUS").strip() or "NEXUS"
                 except: pass
                 self.ui.write_log(f"SYS: 💤 {assigned_name.capitalize()} está en modo suspensión. Di '{assigned_name}' o escribe 'despierta' para despertarlo.")
                 return
@@ -3157,9 +3157,9 @@ class IlumLive:
                 return resp.text.strip()
 
             result = await loop.run_in_executor(_TOOL_EXECUTOR, _analyze)
-            self.ui.write_log(f"ILUM: {result}")
+            self.ui.write_log(f"NEXUS: {result}")
 
-            # Feed result back into the realtime session so ILUM can speak it
+            # Feed result back into the realtime session so NEXUS can speak it
             if self.session:
                 await self.session.send_client_content(
                     turns={"parts": [{"text": f"[RESULTADO AUDIO '{p.name}']\n{result}"}]},
@@ -3287,7 +3287,7 @@ class IlumLive:
                     ).start()
                 return True  # phrase fired → don't also send to Gemini
         except Exception as e:
-            print(f"[ILUM] phrase trigger error: {e}")
+            print(f"[NEXUS] phrase trigger error: {e}")
 
         return False
 
@@ -3381,7 +3381,7 @@ class IlumLive:
 
 
         # Build SpeechConfig
-        _voice_name = _get_ilum_voice()
+        _voice_name = _get_nexus_voice()
         valid_gemini_voices = {"Aoede", "Puck", "Charon", "Kore", "Fenrir", "Zephyr", "Leda", "Orus"}
         if _voice_name not in valid_gemini_voices:
             _voice_name = "Aoede" # Fallback to prevent API errors with unsupported voices
@@ -3407,7 +3407,7 @@ class IlumLive:
             and self._fish_voice_id
         )
         if _use_fish:
-            print("[ILUM] 🐟 Fish Audio activo — audio Gemini será descartado, voz clonada activa")
+            print("[NEXUS] 🐟 Fish Audio activo — audio Gemini será descartado, voz clonada activa")
 
         cfg_kwargs: dict = dict(
             response_modalities=["AUDIO"],
@@ -3447,7 +3447,7 @@ class IlumLive:
                 )
             )
             _vad_applied = True
-            print("[ILUM] VAD config aplicado (typed)")
+            print("[NEXUS] VAD config aplicado (typed)")
         except Exception:
             pass
 
@@ -3461,9 +3461,9 @@ class IlumLive:
                         "silence_duration_ms": 500,
                     }
                 }
-                print("[ILUM] VAD config aplicado (dict)")
+                print("[NEXUS] VAD config aplicado (dict)")
             except Exception:
-                print("[ILUM] VAD config no aplicado")
+                print("[NEXUS] VAD config no aplicado")
 
         # ── Context compression: prevent session degradation over time ────────
         try:
@@ -3488,20 +3488,20 @@ class IlumLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[ILUM] 🔧 {name}  {args}")
+        print(f"[NEXUS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
         # Futuristic execution sound (assets/sound.mp3)
         play_mp3_sound("sound")
 
         try:
-            if name == "shutdown_ilum":
-                self.ui.write_log("SYS: Apagando ILUM...")
+            if name == "shutdown_nexus":
+                self.ui.write_log("SYS: Apagando NEXUS...")
                 # Must quit from Qt main thread — signals are thread-safe
                 self.ui._win._shutdown_sig.emit()
                 return types.FunctionResponse(
                     id=fc.id, name=name,
-                    response={"result": "Apagando ILUM. ¡Hasta luego, señor!"}
+                    response={"result": "Apagando NEXUS. ¡Hasta luego, señor!"}
                 )
 
             if name == "get_current_time":
@@ -4046,7 +4046,7 @@ class IlumLive:
                     else:
                         result = "Módulo native_ui no encontrado."
     
-                elif name == "ilum_ui_control":
+                elif name == "nexus_ui_control":
                     action_ui = args.get("action", "").lower()
                     widget_name = args.get("widget", "").lower()
                     if action_ui == "minimize":
@@ -4127,7 +4127,7 @@ class IlumLive:
         except Exception as e:
             play_mp3_sound("error")
             err_msg = traceback.format_exc()
-            print(f"[ILUM] Error ejecutando {name}:\n{err_msg}")
+            print(f"[NEXUS] Error ejecutando {name}:\n{err_msg}")
             result = f"Error ejecutando {name}: {str(e)}"
             self.ui.write_log(f"❌ Error en {name}")
 
@@ -4140,7 +4140,7 @@ class IlumLive:
 
         pass
 
-        print(f"[ILUM] 📤 {name} → {str(result)[:80]}")
+        print(f"[NEXUS] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -4152,7 +4152,7 @@ class IlumLive:
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
-        print("[ILUM] 🎤 Mic iniciado")
+        print("[NEXUS] 🎤 Mic iniciado")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
@@ -4200,8 +4200,8 @@ class IlumLive:
                         return
 
             with self._speaking_lock:
-                ilum_speaking = self._is_speaking
-            if not ilum_speaking and not self.ui.muted:
+                nexus_speaking = self._is_speaking
+            if not nexus_speaking and not self.ui.muted:
                 # Calculate RMS audio level for sphere visualization
                 rms = 0.0
                 try:
@@ -4261,7 +4261,7 @@ class IlumLive:
                                         self.ui.write_log("SYS: ✅ ¡Perfil de voz registrado exitosamente!")
                                         import winsound
                                         import os
-                                        try: winsound.PlaySound(os.path.join(os.path.dirname(__file__), "IlumInicioRAV.wav"), winsound.SND_FILENAME | winsound.SND_ASYNC)
+                                        try: winsound.PlaySound(os.path.join(os.path.dirname(__file__), "NexusInicioRAV.wav"), winsound.SND_FILENAME | winsound.SND_ASYNC)
                                         except: pass
                                     elif self._is_unauthorized_speaker(current_vec):
                                         self.ui.write_log("SYS: 🛑 Intruso detectado. Bloqueando comando.")
@@ -4291,7 +4291,7 @@ class IlumLive:
                         loop.call_soon_threadsafe(
                             _safe_put, self.out_queue, {"data": data, "mime_type": "audio/pcm"}
                         )
-            elif ilum_speaking:
+            elif nexus_speaking:
                 try:
                     rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2))) / 32768.0
                     self.ui.set_audio_level(min(1.0, rms * 15))
@@ -4317,7 +4317,7 @@ class IlumLive:
                             if len(partial_text) >= 3:
                                 _vosk_speech_detected = True
                             # Si detecta comandos de parada explícitos, interrumpe de inmediato
-                            if any(w in partial_text.lower() for w in ["para", "ilum", "stop", "espera", "silencio"]):
+                            if any(w in partial_text.lower() for w in ["para", "nexus", "stop", "espera", "silencio"]):
                                 _vosk_speech_detected = True
                                 
                             # Evitar saturación del buffer de Vosk
@@ -4330,7 +4330,7 @@ class IlumLive:
                         if self._interrupt_frames >= 5 and _vosk_speech_detected:  # ~100ms de voz + palabras reales
                             if not self._stop_requested.is_set():
                                 self._stop_requested.set()
-                                print(f"[ILUM] 🎤 ¡Interrupción por voz detectada! (RMS: {rms:.4f} > {interrupt_threshold:.4f}, Palabras: '{partial_text[:30]}')")
+                                print(f"[NEXUS] 🎤 ¡Interrupción por voz detectada! (RMS: {rms:.4f} > {interrupt_threshold:.4f}, Palabras: '{partial_text[:30]}')")
                                 # Resetear el reconocedor de interrupción para la próxima vez
                                 if getattr(self, "vosk_interrupt_recognizer", None):
                                     self.vosk_interrupt_recognizer.Reset()
@@ -4369,11 +4369,11 @@ class IlumLive:
                     blocksize=CHUNK_SIZE,
                     callback=callback,
                 ):
-                    print("[ILUM] 🎤 Mic stream open")
+                    print("[NEXUS] 🎤 Mic stream open")
                     while True:
                         await asyncio.sleep(0.01)  # 10ms — máxima responsividad del mic
             except Exception as e:
-                print(f"[ILUM] ❌ Micrófono desconectado o buffer overflow: {e}. Reiniciando en 1 segundo...")
+                print(f"[NEXUS] ❌ Micrófono desconectado o buffer overflow: {e}. Reiniciando en 1 segundo...")
                 await asyncio.sleep(1.0)
 
     async def _synthesize_fish_chunk(self, text: str):
@@ -4412,7 +4412,7 @@ class IlumLive:
                         offset = end
                 except Exception as e:
                     err_msg = str(e)
-                    print(f"[ILUM] ❌ Fish Audio synthesis error: {err_msg}")
+                    print(f"[NEXUS] ❌ Fish Audio synthesis error: {err_msg}")
                     if "Insufficient Balance" in err_msg:
                         self.ui.write_log("SYS: ERROR EN VOZ CLONADA (SALDO INSUFICIENTE). REVIRTIENDO A VOZ NATIVA DEL SISTEMA.")
                         self._fish_audio_enabled = False
@@ -4452,17 +4452,17 @@ class IlumLive:
                                 except Exception:
                                     break
                         except Exception as e:
-                            print(f"[ILUM] Exception in local synthesis thread: {e}")
+                            print(f"[NEXUS] Exception in local synthesis thread: {e}")
                     
                     await loop.run_in_executor(None, run_synthesis)
                     
                 except Exception as e:
-                    print(f"[ILUM] ❌ Error en síntesis de voz local: {e}")
+                    print(f"[NEXUS] ❌ Error en síntesis de voz local: {e}")
         finally:
             self.active_tts_tasks_count = max(0, getattr(self, "active_tts_tasks_count", 1) - 1)
 
     async def _receive_audio(self):
-        print("[ILUM] 👂 Recv iniciado")
+        print("[NEXUS] 👂 Recv iniciado")
         out_buf, in_buf = [], []
         _first_chunk   = True
         _last_tool     = None   # track which tool was executing when error hit
@@ -4478,9 +4478,9 @@ class IlumLive:
         _use_local_tts = self._local_tts_enabled
 
         if _use_fish:
-            print("[ILUM] 🐟 Recv: descartando audio Gemini, usando transcripción → Fish Audio")
+            print("[NEXUS] 🐟 Recv: descartando audio Gemini, usando transcripción → Fish Audio")
         elif _use_local_tts:
-            print("[ILUM] 🎙️ Recv: descartando audio Gemini, usando transcripción → Voz Local (XTTS-v2)")
+            print("[NEXUS] 🎙️ Recv: descartando audio Gemini, usando transcripción → Voz Local (XTTS-v2)")
 
         try:
             while True:
@@ -4501,9 +4501,9 @@ class IlumLive:
                             if txt:
                                 out_buf.append(txt)
                                 if _first_chunk:
-                                    self.ui.clear_ilum_response()
+                                    self.ui.clear_nexus_response()
                                     _first_chunk = False
-                                self.ui.stream_ilum_chunk(txt)
+                                self.ui.stream_nexus_chunk(txt)
 
                                 # Fish Audio: acumular texto y sintetizar en fronteras de frase
                                 if _use_fish:
@@ -4547,11 +4547,11 @@ class IlumLive:
                             _first_chunk = True
 
                     if response.tool_call:
-                        self.ui.clear_ilum_response()
+                        self.ui.clear_nexus_response()
                         _first_chunk = True
                         fcs = response.tool_call.function_calls
                         for fc in fcs:
-                            print(f"[ILUM] 📞 {fc.name}")
+                            print(f"[NEXUS] 📞 {fc.name}")
                             _last_tool = fc.name
                         # Execute all tool calls in parallel when there are multiple
                         if len(fcs) > 1:
@@ -4565,7 +4565,7 @@ class IlumLive:
                             )
                             _last_tool = None  # only clear AFTER successful send
                         except Exception as tool_err:
-                            print(f"[ILUM] ❌ send_tool_response failed: {tool_err}")
+                            print(f"[NEXUS] ❌ send_tool_response failed: {tool_err}")
                             raise
         except Exception as e:
             msg  = str(e)
@@ -4573,15 +4573,15 @@ class IlumLive:
             # Detect 1011 (internal server error) regardless of exception type
             if code == 1011 or "1011" in msg or "Internal error" in msg:
                 tool_info = f" durante '{_last_tool}'" if _last_tool else ""
-                print(f"[ILUM] ⚡ API 1011{tool_info} — reconectando...")
+                print(f"[NEXUS] ⚡ API 1011{tool_info} — reconectando...")
                 self._api_1011_tool = _last_tool
             else:
-                print(f"[ILUM] ❌ Recv: {e}")
+                print(f"[NEXUS] ❌ Recv: {e}")
                 traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[ILUM] 🔊 Play iniciado")
+        print("[NEXUS] 🔊 Play iniciado")
 
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
@@ -4635,7 +4635,7 @@ class IlumLive:
                             try:
                                 await asyncio.to_thread(stream.write, buffered)
                             except Exception as write_err:
-                                print(f"[ILUM] Stream write ignored: {write_err}")
+                                print(f"[NEXUS] Stream write ignored: {write_err}")
                         _jitter_buf.clear()
                         self.set_speaking(False)
                         self._turn_done_event.clear()
@@ -4660,10 +4660,10 @@ class IlumLive:
                             try:
                                 await asyncio.to_thread(stream.write, buffered)
                             except Exception as write_err:
-                                print(f"[ILUM] Stream write ignored: {write_err}")
+                                print(f"[NEXUS] Stream write ignored: {write_err}")
                         _jitter_buf.clear()
         except Exception as e:
-            print(f"[ILUM] ❌ Play: {e}")
+            print(f"[NEXUS] ❌ Play: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -4691,7 +4691,7 @@ class IlumLive:
                 except:
                     pass
         
-        expected_token = sha256(f"{_key_to_check}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest() if _key_to_check else ""
+        expected_token = sha256(f"{_key_to_check}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest() if _key_to_check else ""
         if not expected_token or _session_drm_token != expected_token:
             print("[DRM Security] Violación de integridad del loop de IA. Bloqueado.")
             os._exit(0)
@@ -4707,7 +4707,7 @@ class IlumLive:
 
         while True:
             try:
-                print("[ILUM] 🔌 Conectando...")
+                print("[NEXUS] 🔌 Conectando...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -4722,13 +4722,13 @@ class IlumLive:
                     self._turn_done_event = asyncio.Event()
                     self._reconnect_event = asyncio.Event()
 
-                    print("[ILUM] ✅ Conectado.")
+                    print("[NEXUS] ✅ Conectado.")
                     if getattr(self, "is_sleeping", False):
                         self.ui.set_state("MUTED")
-                        self.ui.write_log("SYS: ILUM en línea (Suspendido).")
+                        self.ui.write_log("SYS: NEXUS en línea (Suspendido).")
                     else:
                         self.ui.set_state("LISTENING")
-                        self.ui.write_log("SYS: ILUM en línea.")
+                        self.ui.write_log("SYS: NEXUS en línea.")
                     reconnect_delay   = 1.0   # reset backoff on successful connection
                     consecutive_fails = 0
                     self._api_1011_tool = None   # clear 1011 tool tracker
@@ -4746,7 +4746,7 @@ class IlumLive:
                                 speaking_fn=lambda: self._is_speaking,
                             )
                         except Exception as _vge:
-                            print(f"[ILUM] VisionGuardian init error: {_vge}")
+                            print(f"[NEXUS] VisionGuardian init error: {_vge}")
                         # Auto morning brief (6am–12pm, once per day)
                         _hour = __import__("datetime").datetime.now().hour
                         if 6 <= _hour < 12 and not already_briefed_today():
@@ -4787,15 +4787,15 @@ class IlumLive:
                         # Timeout de WebSocket al conectar — error de red transitorio.
                         # NO incrementar consecutive_fails: sólo reintento rápido.
                         is_handshake_timeout = True
-                        print(f"[ILUM] ⏱️ Timeout al conectar — reintentando en 1s...")
+                        print(f"[NEXUS] ⏱️ Timeout al conectar — reintentando en 1s...")
                     elif "1011" in msg or "Internal error" in msg:
                         tool_hint = self._api_1011_tool or ""
-                        print(f"[ILUM] ⚡ API 1011{tool_hint and ' durante '+tool_hint} — reconectando...")
+                        print(f"[NEXUS] ⚡ API 1011{tool_hint and ' durante '+tool_hint} — reconectando...")
                         consecutive_fails += 1
                         if consecutive_fails >= 4:
                             self.ui.write_log(
                                 "SYS: ⚠️ Error 1011 repetido. Esperando para no saturar la API...\n"
-                                "SYS: Si persiste más de 2 min, reiniciá ILUM."
+                                "SYS: Si persiste más de 2 min, reiniciá NEXUS."
                             )
                         elif tool_hint:
                             self.ui.write_log(f"SYS: Error de servidor al ejecutar '{tool_hint}'. Reconectando...")
@@ -4803,15 +4803,15 @@ class IlumLive:
                             self.ui.write_log("SYS: Error de servidor 1011. Reconectando...")
                     elif "1008" in msg or "policy violation" in msg.lower() or "not found for API version" in msg:
                         # Model not available / wrong API version — log clearly, retry with same model
-                        print(f"[ILUM] ⚠️ Modelo no disponible en esta versión de API: {msg[:120]}")
+                        print(f"[NEXUS] ⚠️ Modelo no disponible en esta versión de API: {msg[:120]}")
                         self.ui.write_log("SYS: ⚠️ Modelo no disponible. Reintentando...")
                         consecutive_fails += 1
                     elif "1000" in msg or "going away" in msg.lower():
                         # Cierre normal de la sesión (expiró ~15 min) — silencioso
-                        print(f"[ILUM] 🔄 Sesión expirada — reconectando...")
+                        print(f"[NEXUS] 🔄 Sesión expirada — reconectando...")
                         consecutive_fails = 0   # reset: no es un fallo
                     else:
-                        print(f"[ILUM] ⚠️ {exc}")
+                        print(f"[NEXUS] ⚠️ {exc}")
                         traceback.print_exc()
                         consecutive_fails += 1
 
@@ -4842,7 +4842,7 @@ class IlumLive:
             import random as _rnd
             jitter = _rnd.uniform(0, reconnect_delay * 0.25)
             total  = reconnect_delay + jitter
-            print(f"[ILUM] 🔄 Reconectando en {total:.1f}s...")
+            print(f"[NEXUS] 🔄 Reconectando en {total:.1f}s...")
             await asyncio.sleep(total)
 
 def main():
@@ -4851,16 +4851,16 @@ def main():
     import sys
     # ── Single Instance Lock ──────────────────────────────────────────────────
     import ctypes
-    _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "ILUM_AI_SINGLE_INSTANCE_MUTEX")
+    _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "NEXUS_AI_SINGLE_INSTANCE_MUTEX")
     if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
-        print("[ILUM] Ya hay una instancia en ejecución. Cerrando.")
+        print("[NEXUS] Ya hay una instancia en ejecución. Cerrando.")
         try:
-            hwnd = ctypes.windll.user32.FindWindowW(None, "ILUM-AI-HUD")
+            hwnd = ctypes.windll.user32.FindWindowW(None, "NEXUS-AI-HUD")
             if hwnd:
                 ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception as e:
-            print(f"[ILUM] Error al restaurar la ventana activa: {e}")
+            print(f"[NEXUS] Error al restaurar la ventana activa: {e}")
         sys.exit(0)
 
     # ── Admin validation ──────────────────────────────────────────────────────
@@ -4869,9 +4869,9 @@ def main():
     except Exception:
         is_admin = False
     if not is_admin:
-        print("[ILUM] ⚠️ ADVERTENCIA: No se está ejecutando con privilegios de Administrador.")
-        print("[ILUM] ⚠️ Algunas funciones de control del PC o de terminal podrían fallar.")
-        print("[ILUM] ⚠️ Se recomienda iniciar ILUM mediante 'Iniciar ILUM Beta.vbs'.")
+        print("[NEXUS] ⚠️ ADVERTENCIA: No se está ejecutando con privilegios de Administrador.")
+        print("[NEXUS] ⚠️ Algunas funciones de control del PC o de terminal podrían fallar.")
+        print("[NEXUS] ⚠️ Se recomienda iniciar NEXUS mediante 'Iniciar NEXUS Beta.vbs'.")
 
     # ── License check ─────────────────────────────────────────────────────────
     # ──────────────────────────────────────────────────────────────────────────
@@ -4902,12 +4902,12 @@ def main():
         app = QApplication.instance() or QApplication(sys.argv)
         
         dialog = QDialog()
-        dialog.setWindowTitle("Configuración Inicial de ILUM")
+        dialog.setWindowTitle("Configuración Inicial de NEXUS")
         dialog.resize(450, 250)
         dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         layout = QVBoxLayout(dialog)
         
-        lbl_info = QLabel("¡Bienvenido a ILUM!\n\nPor favor, ingresa tus API keys o selecciona Ollama en la configuración.\nEstas se guardarán localmente y de forma segura.")
+        lbl_info = QLabel("¡Bienvenido a NEXUS!\n\nPor favor, ingresa tus API keys o selecciona Ollama en la configuración.\nEstas se guardarán localmente y de forma segura.")
         lbl_info.setStyleSheet("font-size: 14px; font-weight: bold; margin-bottom: 10px;")
         layout.addWidget(lbl_info)
         
@@ -4979,7 +4979,7 @@ def main():
         
         name, ok = QInputDialog.getText(
             None, 
-            "Configuración Inicial - ILUM", 
+            "Configuración Inicial - NEXUS", 
             "¿Cómo desea que lo llame, señor?", 
             text="Señor"
         )
@@ -5037,11 +5037,11 @@ def main():
         if _res.get("success"):
             _is_licensed = True
             _verified_license_key = _local_key
-            _session_drm_token = sha256(f"{_local_key}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest()
+            _session_drm_token = sha256(f"{_local_key}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest()
             
             # --- AUTO-UPDATE CHECK FOR SILENT STARTUP ---
             try:
-                _update_check = drm_manager.check_for_updates("1.0.1")
+                _update_check = drm_manager.check_for_updates("1.0.4")
                 if _update_check.get("update_available"):
                     _url = _update_check.get("url")
                     _target = "ui.py"
@@ -5076,7 +5076,7 @@ def main():
             
         # Generar token de sesión tras login exitoso vinculado al AES TOKEN
         _verified_license_key = _verified_key_temp
-        _session_drm_token = sha256(f"{_verified_key_temp}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest()
+        _session_drm_token = sha256(f"{_verified_key_temp}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest()
     
     from PyQt6.QtGui import QFontDatabase
     from memory.config_manager import BASE_DIR
@@ -5091,7 +5091,7 @@ def main():
                 family = QFontDatabase.applicationFontFamilies(font_id)[0]
                 loaded_custom_fonts.append(family)
 
-    ui = IlumUI("face.png")
+    ui = NexusUI("face.png")
     ui.loaded_custom_fonts = loaded_custom_fonts
 
     # --- START BACKGROUND LICENSE GUARDIAN ---
@@ -5127,7 +5127,7 @@ def main():
                     
                 if _valid:
                     # Renovar/Actualizar token de sesión DRM en caliente
-                    _session_drm_token = sha256(f"{_key}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest()
+                    _session_drm_token = sha256(f"{_key}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest()
 
                     # Refrescar days_remaining en el archivo local de licencia para que Ajustes lo muestre al día
                     if _days_remaining is not None:
@@ -5145,8 +5145,8 @@ def main():
                     print(f"[DRM Guardian] Licencia INVALIDADA: {_msg}")
                     from PyQt6.QtWidgets import QMessageBox
                     _msg_box = QMessageBox(ui_instance._win)
-                    _msg_box.setWindowTitle(" ILUM Security")
-                    _msg_box.setText(f"La licencia de ILUM ha sido revocada o inhabilitada:\n\n{_msg}")
+                    _msg_box.setWindowTitle(" NEXUS Security")
+                    _msg_box.setText(f"La licencia de NEXUS ha sido revocada o inhabilitada:\n\n{_msg}")
                     _msg_box.setIcon(QMessageBox.Icon.Critical)
                     _msg_box.exec()
                     import os
@@ -5179,12 +5179,12 @@ def main():
                     except:
                         label.hide()
 
-            # 2. Add keyboard shortcut & Global Hotkey (INS / Insert key) to wake up ILUM
+            # 2. Add keyboard shortcut & Global Hotkey (INS / Insert key) to wake up NEXUS
             from PyQt6.QtGui import QKeySequence, QShortcut
             from PyQt6.QtCore import Qt, QTimer
 
             def on_shortcut_triggered():
-                # Wake up / unmute ILUM
+                # Wake up / unmute NEXUS
                 if hasattr(ui, "_win"):
                     # Si está muteado, desmutearlo para que escuche
                     if getattr(ui, "muted", False):
@@ -5196,7 +5196,7 @@ def main():
                         if hasattr(ui._win, "showNormal"):
                             ui._win.showNormal()
                             ui._win.activateWindow()
-                            ui.write_log("SYS: 🔔 ILUM en foco vía atajo INS.")
+                            ui.write_log("SYS: 🔔 NEXUS en foco vía atajo INS.")
                         
                         # Cambiar estado visual a escuchando
                         try:
@@ -5248,9 +5248,9 @@ def main():
 
     def runner():
         ui.wait_for_api_key()
-        ilum = IlumLive(ui)
+        nexus = NexusLive(ui)
         try:
-            asyncio.run(ilum.run())
+            asyncio.run(nexus.run())
         except KeyboardInterrupt:
             print("\n🔴 Apagando...")
 
@@ -5263,4 +5263,4 @@ def main():
     os._exit(0)
 
 if __name__ == "__main__":
-    main()
+    main()  

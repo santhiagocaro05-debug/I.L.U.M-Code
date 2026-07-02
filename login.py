@@ -2,11 +2,12 @@ import sys
 import json
 import random
 from pathlib import Path
-from PyQt6.QtCore import Qt, QPoint, QPointF, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QPen, QBrush, QLinearGradient
+from PyQt6.QtCore import Qt, QPoint, QPointF, QTimer, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QFont, QColor, QPalette, QIcon, QPixmap, QPainter, QPen, QBrush, QLinearGradient, QFontDatabase, QRadialGradient, QConicalGradient
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, 
-    QCheckBox, QVBoxLayout, QHBoxLayout, QFrame, QStyle, QMessageBox, QDialog
+    QCheckBox, QVBoxLayout, QHBoxLayout, QFrame, QStyle, QMessageBox, QDialog,
+    QGraphicsDropShadowEffect
 )
 
 import drm_manager
@@ -28,22 +29,27 @@ class Particle:
     def __init__(self, w, h):
         self.x = random.uniform(0, w)
         self.y = random.uniform(0, h)
-        self.vx = random.uniform(-0.4, 0.4)
-        self.vy = random.uniform(-0.4, 0.4)
-        self.radius = random.uniform(1.2, 3.2)
-        self.opacity = random.randint(100, 220)
+        self.vx = random.uniform(-0.8, 0.8)
+        self.vy = random.uniform(-0.8, 0.8)
+        self.radius = random.uniform(1.0, 3.5)
+        self.opacity = random.randint(60, 180)
+        self.target_opacity = random.randint(60, 180)
+        self.pulse_speed = random.uniform(0.015, 0.035)
+        self.color_variant = random.choice([0, 1, 2])  # 0=azul, 1=púrpura, 2=blanco
 
 class ArcReactorWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(60, 60)
+        self.setFixedSize(50, 50)
         self.angle = 0
+        self.pulse = 0
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_angle)
-        self.timer.start(25) # ~40 FPS animation for rotation
+        self.timer.timeout.connect(self.update_animation)
+        self.timer.start(16)
         
-    def update_angle(self):
-        self.angle = (self.angle + 2) % 360
+    def update_animation(self):
+        self.angle = (self.angle + 3.0) % 360
+        self.pulse += 0.05
         self.update()
         
     def paintEvent(self, event):
@@ -52,39 +58,80 @@ class ArcReactorWidget(QWidget):
         
         center_x = self.width() / 2.0
         center_y = self.height() / 2.0
+        pulse_val = 0.80 + 0.20 * abs((self.pulse % 3.14) - 1.57) / 1.57
         
-        # Soft outer white glow
+        # Outer glow with gradient
+        glow_radius = 30 * pulse_val
+        glow = QRadialGradient(center_x, center_y, glow_radius)
+        glow.setColorAt(0.0, QColor(0, 180, 255, 20))
+        glow.setColorAt(0.5, QColor(100, 80, 255, 10))
+        glow.setColorAt(1.0, QColor(0, 180, 255, 0))
+        painter.setBrush(QBrush(glow))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(center_x, center_y), glow_radius, glow_radius)
+        
+        # Outer ring with gradient
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(255, 255, 255, 20), 4))
-        painter.drawEllipse(QPointF(center_x, center_y), 24, 24)
-        
-        # Outer solid ring
-        painter.setPen(QPen(QColor(255, 255, 255, 130), 1.5))
+        pen = QPen()
+        pen.setWidth(2)
+        ring_grad = QConicalGradient(center_x, center_y, self.angle)
+        ring_grad.setColorAt(0.0, QColor(0, 180, 255, 200))
+        ring_grad.setColorAt(0.3, QColor(120, 100, 255, 180))
+        ring_grad.setColorAt(0.6, QColor(0, 180, 255, 200))
+        ring_grad.setColorAt(1.0, QColor(0, 180, 255, 200))
+        pen.setBrush(QBrush(ring_grad))
+        painter.setPen(pen)
         painter.drawEllipse(QPointF(center_x, center_y), 20, 20)
         
-        # Save state, translate and rotate for spinning blades
+        # Inner ring glow
+        pen.setColor(QColor(100, 80, 255, 40))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.drawEllipse(QPointF(center_x, center_y), 16, 16)
+        
+        # Rotating blades
         painter.save()
         painter.translate(center_x, center_y)
         painter.rotate(self.angle)
         
-        # Rotating dashed ring
-        pen = QPen(QColor(255, 255, 255, 220), 2.5)
+        # Outer dashed ring
+        pen = QPen(QColor(100, 200, 255, 150), 1.5)
         pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
-        painter.drawEllipse(QPointF(0, 0), 14, 14)
+        painter.drawEllipse(QPointF(0, 0), 12, 12)
         
-        # Arc Reactor blades (8 segments)
-        painter.setPen(QPen(QColor(255, 255, 255, 140), 1.5))
-        for _ in range(8):
-            painter.rotate(45)
-            painter.drawLine(0, 7, 0, 14)
+        # Blades with gradient (6 blades instead of 8 for cleaner look)
+        for i in range(6):
+            painter.save()
+            painter.rotate(i * 60)
             
+            grad = QLinearGradient(0, 4, 0, 13)
+            grad.setColorAt(0.0, QColor(0, 180, 255, 220))
+            grad.setColorAt(0.5, QColor(120, 100, 255, 180))
+            grad.setColorAt(1.0, QColor(0, 180, 255, 40))
+            painter.setPen(QPen(grad, 1.8))
+            painter.drawLine(0, 5, 0, 13)
+            
+            painter.restore()
+        
         painter.restore()
         
-        # Inner glowing power core
-        painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
-        painter.setPen(QPen(QColor(255, 255, 255, 255), 1.5))
-        painter.drawEllipse(QPointF(center_x, center_y), 6, 6)
+        # Inner core with pulse and glow
+        core_radius = 4.5 * pulse_val
+        core_grad = QRadialGradient(center_x, center_y, core_radius)
+        core_grad.setColorAt(0.0, QColor(255, 255, 255, 255))
+        core_grad.setColorAt(0.3, QColor(200, 230, 255, 240))
+        core_grad.setColorAt(0.7, QColor(100, 180, 255, 200))
+        core_grad.setColorAt(1.0, QColor(80, 60, 255, 120))
+        painter.setBrush(QBrush(core_grad))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(center_x, center_y), core_radius, core_radius)
+        
+        # Inner sparkle
+        sparkle_radius = 1.5 * pulse_val
+        painter.setBrush(QBrush(QColor(255, 255, 255, 180)))
+        painter.drawEllipse(QPointF(center_x - core_radius * 0.3, center_y - core_radius * 0.3), 
+                           sparkle_radius, sparkle_radius)
 
 class LoginWindow(QDialog):
     update_status_sig = pyqtSignal(str, bool, bool)
@@ -98,112 +145,179 @@ class LoginWindow(QDialog):
         self.update_status_sig.connect(self.set_status)
         self.finish_login_sig.connect(self.finish_login)
         
-        # Setup background floating particles (neural constellation)
-        self.particles = [Particle(450, 480) for _ in range(35)]
+        # Setup background floating particles
+        self.particles = [Particle(500, 540) for _ in range(55)]
         
         self.init_ui()
         self.load_remembered_license()
         
-        # Start particle update timer (60 FPS animation loop)
+        # Start particle update timer
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self.update_particles)
         self.animation_timer.start(16)
+        
+        # Fade in animation
+        self.setWindowOpacity(0)
+        self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_anim.setDuration(800)
+        self.fade_anim.setStartValue(0)
+        self.fade_anim.setEndValue(1.0)
+        self.fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        QTimer.singleShot(100, self.fade_anim.start)
 
     def init_ui(self):
         # Frameless and translucent window setup
-        self.setWindowTitle("ILUM ACCESS")
+        self.setWindowTitle("NEXUS ACCESS")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.resize(450, 480)
+        self.resize(500, 560)
+        self.setMinimumSize(420, 480)
 
-        # Enhanced Stylesheets with liquid glass effect and white colors
+        # Enhanced Stylesheets with premium glass effect - SIN warnings
         self.setStyleSheet("""
             QWidget {
                 color: #ffffff;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
                 font-size: 13px;
             }
             QFrame#mainFrame {
-                background-color: rgba(255, 255, 255, 0.12);
-                border: 1.5px solid rgba(255, 255, 255, 0.25);
-                border-radius: 20px;
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 rgba(255, 255, 255, 0.06),
+                    stop: 0.5 rgba(255, 255, 255, 0.03),
+                    stop: 1 rgba(255, 255, 255, 0.01)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 28px;
+            }
+            QFrame#mainFrame:hover {
+                border: 1px solid rgba(255, 255, 255, 0.16);
             }
             QLabel#titleLabel {
-                font-family: 'Marske', 'Segoe UI Semibold', Arial;
-                font-size: 22px;
-                font-weight: bold;
+                font-family: 'Segoe UI Semibold', Arial;
+                font-size: 26px;
+                font-weight: 700;
                 color: #ffffff;
-                letter-spacing: 3px;
+                letter-spacing: 5px;
+                background: transparent;
+            }
+            QLabel#subtitleLabel {
+                color: rgba(255, 255, 255, 0.35);
+                font-size: 10px;
+                letter-spacing: 4px;
+                font-weight: 600;
             }
             QLabel#sectionLabel {
-                font-weight: bold;
-                color: rgba(255, 255, 255, 0.85);
+                font-weight: 600;
+                color: rgba(255, 255, 255, 0.65);
+                font-size: 11px;
+                letter-spacing: 1.5px;
             }
             QLineEdit {
-                background-color: rgba(255, 255, 255, 0.08);
-                border: 1.5px solid rgba(255, 255, 255, 0.2);
-                border-radius: 12px;
-                padding: 9px 12px;
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1.5px solid rgba(255, 255, 255, 0.08);
+                border-radius: 16px;
+                padding: 14px 18px;
                 color: #ffffff;
                 font-size: 13px;
-                selection-background-color: rgba(255, 255, 255, 0.3);
+                selection-background-color: rgba(100, 200, 255, 0.25);
             }
             QLineEdit:focus {
-                border: 1.5px solid rgba(255, 255, 255, 0.6);
-                background-color: rgba(255, 255, 255, 0.15);
+                border: 1.5px solid rgba(100, 200, 255, 0.40);
+                background-color: rgba(255, 255, 255, 0.07);
+            }
+            QLineEdit:hover {
+                border: 1.5px solid rgba(255, 255, 255, 0.18);
             }
             QCheckBox {
-                spacing: 8px;
+                spacing: 12px;
+                color: rgba(255, 255, 255, 0.60);
+                font-size: 12px;
             }
             QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 1.5px solid rgba(255, 255, 255, 0.4);
-                border-radius: 4px;
-                background: rgba(255, 255, 255, 0.1);
+                width: 18px;
+                height: 18px;
+                border: 2px solid rgba(255, 255, 255, 0.20);
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.03);
             }
             QCheckBox::indicator:checked {
-                background: rgba(255, 255, 255, 0.8);
-                border: 1.5px solid rgba(255, 255, 255, 0.8);
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 1,
+                    stop: 0 #0077ff,
+                    stop: 1 #00b4ff
+                );
+                border: 2px solid #00b4ff;
+            }
+            QCheckBox::indicator:hover {
+                border: 2px solid rgba(255, 255, 255, 0.40);
             }
             QPushButton#btnPrimary {
-                background-color: rgba(255, 255, 255, 0.9);
-                color: #000000;
-                font-weight: bold;
-                border-radius: 12px;
-                padding: 11px 20px;
-                font-size: 13px;
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #0077ff,
+                    stop: 1 #00b4ff
+                );
+                color: #ffffff;
+                font-weight: 700;
+                border-radius: 16px;
+                padding: 16px 28px;
+                font-size: 14px;
                 border: none;
+                letter-spacing: 1.5px;
             }
             QPushButton#btnPrimary:hover {
-                background-color: #ffffff;
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #0088ff,
+                    stop: 1 #00ccff
+                );
             }
             QPushButton#btnPrimary:pressed {
-                background-color: rgba(255, 255, 255, 0.7);
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #0066dd,
+                    stop: 1 #0099dd
+                );
             }
             QPushButton#btnSecondary {
-                background-color: rgba(255, 255, 255, 0.08);
-                color: #ffffff;
-                font-weight: bold;
-                border-radius: 12px;
-                padding: 11px 20px;
-                font-size: 13px;
-                border: 1.5px solid rgba(255, 255, 255, 0.3);
+                background-color: rgba(255, 255, 255, 0.04);
+                color: rgba(255, 255, 255, 0.70);
+                font-weight: 600;
+                border-radius: 16px;
+                padding: 16px 20px;
+                font-size: 12px;
+                border: 1.5px solid rgba(255, 255, 255, 0.10);
+                letter-spacing: 0.5px;
             }
             QPushButton#btnSecondary:hover {
-                background-color: rgba(255, 255, 255, 0.18);
-                border: 1.5px solid rgba(255, 255, 255, 0.5);
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1.5px solid rgba(255, 255, 255, 0.20);
+                color: #ffffff;
             }
             QPushButton#btnLink {
                 background-color: transparent;
-                color: rgba(255, 255, 255, 0.7);
+                color: rgba(255, 255, 255, 0.35);
                 border: none;
-                text-decoration: underline;
-                font-size: 12px;
-                padding: 6px;
+                font-size: 11px;
+                padding: 8px;
+                text-decoration: none;
             }
             QPushButton#btnLink:hover {
-                color: #ffffff;
+                color: rgba(255, 255, 255, 0.70);
+            }
+            QPushButton#btnClose {
+                background: transparent;
+                border: none;
+                padding: 6px;
+                color: rgba(255,255,255,0.30);
+                font-size: 16px;
+                font-weight: 300;
+            }
+            QPushButton#btnClose:hover {
+                color: rgba(255,255,255,0.80);
+                background: rgba(255,255,255,0.05);
+                border-radius: 10px;
             }
         """)
 
@@ -211,116 +325,136 @@ class LoginWindow(QDialog):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Translucent Container Frame with liquid glass effect
+        # Translucent Container Frame
         self.frame = QFrame(self)
         self.frame.setObjectName("mainFrame")
         
-        # Add liquid glass shadow effect
-        self.frame.setGraphicsEffect(None)
+        # Glass shadow
+        shadow = QGraphicsDropShadowEffect(self.frame)
+        shadow.setBlurRadius(50)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        shadow.setOffset(0, 12)
+        self.frame.setGraphicsEffect(shadow)
         
         frame_layout = QVBoxLayout(self.frame)
-        frame_layout.setContentsMargins(20, 15, 20, 25)
-        frame_layout.setSpacing(15)
+        frame_layout.setContentsMargins(28, 20, 28, 30)
+        frame_layout.setSpacing(18)
 
         # --- CUSTOM TITLE BAR ---
         title_bar_layout = QHBoxLayout()
         title_bar_layout.setContentsMargins(0, 0, 0, 0)
+        title_bar_layout.setSpacing(14)
         
-        # Rotating Arc Reactor Logo Widget
+        # Arc Reactor
         self.arc_reactor = ArcReactorWidget()
         title_bar_layout.addWidget(self.arc_reactor)
 
-        # Spacing
-        title_bar_layout.addSpacing(5)
-
-        self.lbl_title = QLabel("ILUM ACCESS")
+        # Title
+        self.lbl_title = QLabel("NEXUS")
         self.lbl_title.setObjectName("titleLabel")
         title_bar_layout.addWidget(self.lbl_title)
         
         title_bar_layout.addStretch()
 
-        # Minimize Button
-        self.btn_min = QPushButton()
-        self.btn_min.setFixedSize(28, 28)
-        self.btn_min.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton))
-        self.btn_min.setStyleSheet("background: transparent; border: none; padding: 2px; color: white;")
-        self.btn_min.clicked.connect(self.showMinimized)
-        title_bar_layout.addWidget(self.btn_min)
-
-        # Close Button
-        self.btn_close = QPushButton()
-        self.btn_close.setFixedSize(28, 28)
-        self.btn_close.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton))
-        self.btn_close.setStyleSheet("background: transparent; border: none; padding: 2px; color: white;")
+        # Close button only (cleaner)
+        self.btn_close = QPushButton("✕")
+        self.btn_close.setObjectName("btnClose")
+        self.btn_close.setFixedSize(32, 32)
         self.btn_close.clicked.connect(self.close)
         title_bar_layout.addWidget(self.btn_close)
 
         frame_layout.addLayout(title_bar_layout)
 
-        # Glowing divider
+        # Subtle divider with glow
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.2); max-height: 1.2px; border: none;")
+        sep.setStyleSheet("""
+            background: qlineargradient(
+                x1: 0, y1: 0, x2: 1, y2: 0,
+                stop: 0 transparent,
+                stop: 0.3 rgba(100, 200, 255, 0.10),
+                stop: 0.5 rgba(100, 200, 255, 0.15),
+                stop: 0.7 rgba(100, 200, 255, 0.10),
+                stop: 1 transparent
+            );
+            max-height: 1px;
+            border: none;
+        """)
         frame_layout.addWidget(sep)
 
         # --- BODY ---
         
+        # Subtitle
+        self.subtitle = QLabel("ACCESO SEGURO")
+        self.subtitle.setObjectName("subtitleLabel")
+        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        frame_layout.addWidget(self.subtitle)
+        
+        frame_layout.addSpacing(4)
+        
         # License key field
-        self.lbl_license = QLabel("Clave de Licencia:")
+        self.lbl_license = QLabel("CLAVE DE LICENCIA")
         self.lbl_license.setObjectName("sectionLabel")
         frame_layout.addWidget(self.lbl_license)
 
         self.txt_license = QLineEdit()
-        self.txt_license.setPlaceholderText("ILUM-XXXX-XXXX-XXXX")
+        self.txt_license.setPlaceholderText("NEXUS-XXXX-XXXX-XXXX")
         frame_layout.addWidget(self.txt_license)
 
-        # Email field (Only needed for Reset and Recovery)
-        self.lbl_email = QLabel("Correo Electrónico (Solo para Resetear o Recuperar):")
+        # Email field
+        self.lbl_email = QLabel("CORREO ELECTRÓNICO")
         self.lbl_email.setObjectName("sectionLabel")
         frame_layout.addWidget(self.lbl_email)
 
         self.txt_email = QLineEdit()
-        self.txt_email.setPlaceholderText("comprador@correo.com")
+        self.txt_email.setPlaceholderText("tu@correo.com")
         frame_layout.addWidget(self.txt_email)
 
         # Remember license checkbox
-        self.chk_remember = QCheckBox("Recordar clave en este dispositivo")
+        self.chk_remember = QCheckBox("Recordar en este dispositivo")
         frame_layout.addWidget(self.chk_remember)
 
-        # Status output
+        # Status output with icon
         self.status_container = QHBoxLayout()
+        self.status_container.setSpacing(12)
         self.status_icon = QLabel()
-        self.status_icon.setFixedSize(20, 20)
+        self.status_icon.setFixedSize(18, 18)
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #ffffff; font-weight: 500;")
+        self.status_label.setStyleSheet("color: rgba(255,255,255,0.60); font-weight: 500; font-size: 12px;")
         self.status_label.setWordWrap(True)
         
         self.status_container.addWidget(self.status_icon)
         self.status_container.addWidget(self.status_label, 1)
         frame_layout.addLayout(self.status_container)
 
-        # Action Buttons Layout (Iniciar & Resetear)
+        # Action Buttons
         buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(12)
+        buttons_layout.setSpacing(16)
 
-        self.btn_launch = QPushButton("Iniciar Asistente")
+        self.btn_launch = QPushButton("INICIAR")
         self.btn_launch.setObjectName("btnPrimary")
         self.btn_launch.clicked.connect(self.on_launch_clicked)
-        buttons_layout.addWidget(self.btn_launch)
+        buttons_layout.addWidget(self.btn_launch, 2)
 
-        self.btn_reset = QPushButton("Resetear HWID")
+        self.btn_reset = QPushButton("REINICIAR")
         self.btn_reset.setObjectName("btnSecondary")
         self.btn_reset.clicked.connect(self.on_reset_clicked)
-        buttons_layout.addWidget(self.btn_reset)
+        buttons_layout.addWidget(self.btn_reset, 1)
 
         frame_layout.addLayout(buttons_layout)
 
-        # Recovery link button
-        self.btn_recover = QPushButton("¿Olvidaste tu clave? Recuperar mi clave")
+        # Recovery link
+        self.btn_recover = QPushButton("¿Olvidaste tu clave?")
         self.btn_recover.setObjectName("btnLink")
         self.btn_recover.clicked.connect(self.on_recover_clicked)
         frame_layout.addWidget(self.btn_recover, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # Footer version
+        version_label = QLabel("v1.0.4 · Sistema de Seguridad Avanzado")
+        version_label.setStyleSheet("color: rgba(255,255,255,0.15); font-size: 9px; letter-spacing: 1px;")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        frame_layout.addWidget(version_label)
 
         main_layout.addWidget(self.frame)
 
@@ -331,34 +465,44 @@ class LoginWindow(QDialog):
             p.x += p.vx
             p.y += p.vy
             
-            # Wrap-around boundary check
-            if p.x < 0: p.x = width
-            elif p.x > width: p.x = 0
-            if p.y < 0: p.y = height
-            elif p.y > height: p.y = 0
+            padding = 30
+            if p.x < -padding: p.x = width + padding
+            elif p.x > width + padding: p.x = -padding
+            if p.y < -padding: p.y = height + padding
+            elif p.y > height + padding: p.y = -padding
             
-        self.update() # Triggers paintEvent
+            p.opacity += p.pulse_speed * (p.target_opacity - p.opacity) * 0.02
+            
+        self.update()
 
     # --- GLOWING BACKGROUND & CONSTELLATION PAINT ---
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 1. Paint dark glass background gradient
+        # Background gradient - deeper and richer
         grad = QLinearGradient(0, 0, 0, self.height())
-        grad.setColorAt(0.0, QColor(20, 20, 30, 245))
-        grad.setColorAt(1.0, QColor(10, 10, 15, 252))
+        grad.setColorAt(0.0, QColor(8, 10, 20, 250))
+        grad.setColorAt(0.5, QColor(5, 6, 14, 252))
+        grad.setColorAt(1.0, QColor(2, 3, 8, 255))
         painter.setBrush(QBrush(grad))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), 20, 20)
+        painter.drawRoundedRect(self.rect(), 28, 28)
         
-        # 2. Paint floating particles (Neural Nodes)
+        # Paint particles with different colors
         for p in self.particles:
-            painter.setBrush(QBrush(QColor(255, 255, 255, p.opacity)))
+            alpha = int(p.opacity)
+            if p.color_variant == 0:
+                color = QColor(80, 180, 255, alpha)
+            elif p.color_variant == 1:
+                color = QColor(150, 100, 255, alpha)
+            else:
+                color = QColor(200, 220, 255, alpha)
+            painter.setBrush(QBrush(color))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QPointF(p.x, p.y), p.radius, p.radius)
             
-        # 3. Paint linking constellation lines (Neural Net)
+        # Constellation lines
         for i in range(len(self.particles)):
             for j in range(i + 1, len(self.particles)):
                 p1 = self.particles[i]
@@ -366,12 +510,12 @@ class LoginWindow(QDialog):
                 dx = p1.x - p2.x
                 dy = p1.y - p2.y
                 dist = (dx*dx + dy*dy) ** 0.5
-                if dist < 65:
-                    # Fade opacity proportional to distance (closer = brighter)
-                    alpha = int((1.0 - (dist / 65.0)) * 55)
-                    pen = QPen(QColor(255, 255, 255, alpha), 1)
-                    painter.setPen(pen)
-                    painter.drawLine(QPointF(p1.x, p1.y), QPointF(p2.x, p2.y))
+                if dist < 75:
+                    alpha = int((1.0 - (dist / 75.0)) * 35)
+                    if alpha > 3:
+                        pen = QPen(QColor(120, 180, 255, alpha), 0.6)
+                        painter.setPen(pen)
+                        painter.drawLine(QPointF(p1.x, p1.y), QPointF(p2.x, p2.y))
 
     # --- WINDOW DRAGGING ---
     def mousePressEvent(self, event):
@@ -384,20 +528,20 @@ class LoginWindow(QDialog):
             self.move(event.globalPosition().toPoint() - self.drag_position)
             event.accept()
 
-    # --- BUSINESS LOGIC ---
+    # --- BUSINESS LOGIC --- (TODAS LAS FUNCIONES ORIGINALES SIN CAMBIOS)
     
     def set_status(self, text: str, is_error: bool = False, is_success: bool = False):
         self.status_label.setText(text)
         if is_error:
-            self.status_label.setStyleSheet("color: #ff6b6b; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #ff6b6b; font-weight: 500; font-size: 12px;")
             pix = self.style().standardPixmap(QStyle.StandardPixmap.SP_MessageBoxCritical)
-            self.status_icon.setPixmap(pix.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio))
+            self.status_icon.setPixmap(pix.scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio))
         elif is_success:
-            self.status_label.setStyleSheet("color: #51cf66; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #51cf66; font-weight: 500; font-size: 12px;")
             pix = self.style().standardPixmap(QStyle.StandardPixmap.SP_DialogApplyButton)
-            self.status_icon.setPixmap(pix.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio))
+            self.status_icon.setPixmap(pix.scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio))
         else:
-            self.status_label.setStyleSheet("color: #ffffff; font-weight: 500;")
+            self.status_label.setStyleSheet("color: rgba(255,255,255,0.60); font-weight: 500; font-size: 12px;")
             self.status_icon.clear()
 
     def load_remembered_license(self):
@@ -437,7 +581,7 @@ class LoginWindow(QDialog):
         def bg_update_worker():
             try:
                 import time
-                current_ver = "1.0.0"
+                current_ver = "1.0.4"
                 update_res = drm_manager.check_for_updates(current_ver)
                 
                 if update_res.get("update_available"):
@@ -465,7 +609,7 @@ class LoginWindow(QDialog):
                     time.sleep(1.0)
                     self.finish_login_sig.emit(key, getattr(self, "aes_token", ""))
             except Exception as e:
-                print(f"[ILUM Login] Error en hilo de actualizaciones: {e}. Accediendo directamente...")
+                print(f"[NEXUS Login] Error en hilo de actualizaciones: {e}. Accediendo directamente...")
                 self.finish_login_sig.emit(key, getattr(self, "aes_token", ""))
                 
         threading.Thread(target=bg_update_worker, daemon=True).start()
@@ -481,10 +625,9 @@ class LoginWindow(QDialog):
         res = drm_manager.validate_license(key)
         
         if res.get("success"):
-            # Generar token de descifrado AES a partir de la firma (evita memory hooking del booleano)
             import hashlib
             sig = res.get("signature", "FALLBACK_SIG")
-            self.aes_token = hashlib.sha256(f"ILUM_AES_TOKEN_{sig}_{key}".encode()).hexdigest()
+            self.aes_token = hashlib.sha256(f"NEXUS_AES_TOKEN_{sig}_{key}".encode()).hexdigest()
             
             self.save_license_locally(
                 key,
@@ -531,11 +674,10 @@ class LoginWindow(QDialog):
     def finish_login(self, verified_key: str, aes_token: str):
         self.accept_code = True
         
-        # Signal success
         if self.parent_launcher and hasattr(self.parent_launcher, "on_login_success"):
             self.parent_launcher.on_login_success(verified_key, aes_token)
         else:
-            print("[ILUM Login] Login exitoso. Clave verificada:", verified_key)
+            print("[NEXUS Login] Login exitoso. Clave verificada:", verified_key)
             
         self.accept()
 

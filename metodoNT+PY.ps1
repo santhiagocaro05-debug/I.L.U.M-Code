@@ -1,7 +1,7 @@
 param(
     [string]$ProjectPath = "",
     [string]$Entry = "main.py",
-    [string]$AppName = "ILUM",
+    [string]$AppName = "NEXUS",
     [string]$Icon = "",
     [switch]$InstallDeps,
     [switch]$Clean,
@@ -51,7 +51,7 @@ function Copy-TreeClean($Source, $Destination) {
         "api_keys.json",
         "api_keys.json.enc",
         "license.json",
-        "ilum.log",
+        "nexus.log",
         "last_captured_screen.png"
     )
 
@@ -85,7 +85,7 @@ function Copy-TreeClean($Source, $Destination) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
-    $ProjectPath = Read-Host "Ruta del proyecto ILUM fuente"
+    $ProjectPath = Read-Host "Ruta del proyecto NEXUS fuente"  # ✅ CAMBIADO
 }
 
 $ProjectPath = (Resolve-Path -LiteralPath $ProjectPath).Path
@@ -96,7 +96,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $ProjectPath $Entry))) {
 if ([string]::IsNullOrWhiteSpace($Icon)) {
     $possibleIcons = @(
         "assets\current_icon.ico",
-        "assets\ilum_icono.ico",
+        "assets\nexus_icono.ico",
         "face.ico"
     )
     foreach ($candidate in $possibleIcons) {
@@ -108,7 +108,7 @@ if ([string]::IsNullOrWhiteSpace($Icon)) {
     }
 }
 
-Step "Preparando estructura segura de ILUM"
+Step "Preparando estructura segura de NEXUS"
 Write-Host "Proyecto fuente: $ProjectPath"
 Write-Host "Entrada: $Entry"
 Write-Host "Nombre: $AppName"
@@ -145,7 +145,7 @@ if ($InstallDeps) {
     }
 }
 
-$stageRoot = Join-Path $ProjectPath "build\ILUM_secure_stage"
+$stageRoot = Join-Path $ProjectPath "build\NEXUS_secure_stage"  # ✅ CAMBIADO
 $distRoot = Join-Path $ProjectPath "dist"
 $distApp = Join-Path $distRoot $AppName
 
@@ -166,8 +166,8 @@ Push-Location $stageRoot
 Step "Creando configuracion publica minima"
 New-Item -ItemType Directory -Force -Path "config" | Out-Null
 New-Item -ItemType Directory -Force -Path "memory" | Out-Null
-New-Item -ItemType Directory -Force -Path "assets\voice_samples\ilum" | Out-Null
-New-Item -ItemType Directory -Force -Path "assets\voice_samples\ilum_processed" | Out-Null
+New-Item -ItemType Directory -Force -Path "assets\voice_samples\nexus" | Out-Null
+New-Item -ItemType Directory -Force -Path "assets\voice_samples\nexus_processed" | Out-Null
 New-Item -ItemType Directory -Force -Path "config\tts_cache" | Out-Null
 
 @'
@@ -182,7 +182,7 @@ New-Item -ItemType Directory -Force -Path "config\tts_cache" | Out-Null
   "tmdb_api_key": "",
   "timezone": "America/Lima",
   "language": "es-ES",
-  "ilum_theme": "gold"
+  "nexus_theme": "gold"
 }
 '@ | Set-Content -LiteralPath "config\api_keys.example.json" -Encoding UTF8
 
@@ -211,7 +211,7 @@ if (-not (Test-Path -LiteralPath "config\morning_brief_state.json")) {
 
 if (-not (Test-Path -LiteralPath "SPOTIFY_SETUP.txt")) {
 @'
-CONFIGURAR SPOTIFY EN ILUM
+CONFIGURAR SPOTIFY EN NEXUS  # ✅ CAMBIADO
 
 1. Entra a https://developer.spotify.com/dashboard
 2. Crea una app.
@@ -219,7 +219,7 @@ CONFIGURAR SPOTIFY EN ILUM
    http://127.0.0.1:8888/callback
    http://127.0.0.1:8765/callback
 4. Copia Client ID y Client Secret.
-5. Abre ILUM > Configuracion > Spotify.
+5. Abre NEXUS > Configuracion > Spotify.  # ✅ CAMBIADO
 6. Activa configuracion avanzada.
 7. Pega Client ID, Client Secret y Redirect URI.
 8. Guarda cambios.
@@ -246,7 +246,7 @@ if (-not $SkipCorePyd -and (Test-Path -LiteralPath "core_main.py")) {
     Warn "No encontre core_main.py; se compilara lo que exista en el proyecto."
 }
 
-Step "Compilando ILUM con PyInstaller en modo seguro"
+Step "Compilando NEXUS con PyInstaller en modo seguro"  # ✅ CAMBIADO
 $pyiArgs = @(
     "--name", $AppName,
     "--onedir",
@@ -258,8 +258,8 @@ $pyiArgs = @(
     "--add-data", "memory;memory",
     "--add-data", "core;core",
     "--add-data", "actions;actions",
-    "--add-data", "IlumInicioRAV.wav;.",
-    "--add-data", "SuspenderIlum.wav;.",
+    "--add-data", "NexusInicioRAV.wav;.",  # ✅ CAMBIADO
+    "--add-data", "SuspenderNexus.wav;.",
     "--add-data", "ffmpeg.exe;.",
     "--add-data", "ffprobe.exe;.",
     "--hidden-import", "PyQt6",
@@ -337,7 +337,7 @@ if (-not (Test-Path -LiteralPath $built)) {
 }
 
 Get-ChildItem -LiteralPath $built -Recurse -Force -File | Where-Object {
-    $_.Name -in @("api_keys.json", "api_keys.json.enc", "license.json", "ilum.log") -or
+    $_.Name -in @("api_keys.json", "api_keys.json.enc", "license.json", "nexus.log") -or  # ✅ CAMBIADO
     $_.Name -match "backup|\.bak$|\.tmp$|secret|token|credential"
 } | ForEach-Object {
     Remove-Item -LiteralPath $_.FullName -Force
@@ -354,8 +354,8 @@ foreach ($folder in @(
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $built "assets\voice_samples\ilum") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $built "assets\voice_samples\ilum_processed") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $built "assets\voice_samples\nexus") | Out-Null  # ✅ CAMBIADO
+New-Item -ItemType Directory -Force -Path (Join-Path $built "assets\voice_samples\nexus_processed") | Out-Null  # ✅ CAMBIADO
 New-Item -ItemType Directory -Force -Path (Join-Path $built "config\tts_cache") | Out-Null
 
 Pop-Location
@@ -366,7 +366,7 @@ if (Test-Path -LiteralPath $distApp) { Remove-Item -LiteralPath $distApp -Recurs
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 Copy-Item -LiteralPath $built -Destination $distRoot -Recurse -Force
 
-Ok "ILUM compilado:"
+Ok "NEXUS compilado:"  # ✅ CAMBIADO
 Write-Host $distApp -ForegroundColor Green
 Write-Host ""
 Write-Host "Metodo usado:" -ForegroundColor Cyan
