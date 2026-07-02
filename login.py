@@ -451,7 +451,7 @@ class LoginWindow(QDialog):
         frame_layout.addWidget(self.btn_recover, 0, Qt.AlignmentFlag.AlignCenter)
 
         # Footer version
-        version_label = QLabel("v1.0.4 · Sistema de Seguridad Avanzado")
+        version_label = QLabel("v1.0.5 · Sistema de Seguridad Avanzado")
         version_label.setStyleSheet("color: rgba(255,255,255,0.15); font-size: 9px; letter-spacing: 1px;")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         frame_layout.addWidget(version_label)
@@ -581,7 +581,7 @@ class LoginWindow(QDialog):
         def bg_update_worker():
             try:
                 import time
-                current_ver = "1.0.4"
+                current_ver = "1.0.5"
                 update_res = drm_manager.check_for_updates(current_ver)
                 
                 if update_res.get("update_available"):

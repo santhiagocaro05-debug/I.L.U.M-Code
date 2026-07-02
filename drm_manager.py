@@ -44,7 +44,7 @@ def _load_supabase_client_keys() -> tuple[str, str]:
     if not url:
         url = "https://vktpkyrdmgqmvpxwkwcx.supabase.co"
     if not anon:
-        anon = "sb_publishable_5DDUYrisPUiJSMLBh7cbqA_HdkLAADT"
+        anon = "sb_secret_yUpnCSRcYX6OD6UrJj2Vpw_FfuLOeuW"
         
     return url, anon
 

@@ -5041,7 +5041,7 @@ def main():
             
             # --- AUTO-UPDATE CHECK FOR SILENT STARTUP ---
             try:
-                _update_check = drm_manager.check_for_updates("1.0.4")
+                _update_check = drm_manager.check_for_updates("1.0.5")
                 if _update_check.get("update_available"):
                     _url = _update_check.get("url")
                     _target = "ui.py"

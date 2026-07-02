@@ -480,7 +480,7 @@ class SystemMonitorWidget(QWidget):
 
 class HUDIconButton(QPushButton):
     def __init__(self, icon_name: str, size: int = 36, icon_size: int = 14,
-                 color: str = "#d8dbe2", parent=None):
+                 color: str = "#d8dbe2", parent=None, liquid_glass: bool = False):
         super().__init__(parent)
 
         self.setFixedSize(size, size)
@@ -489,6 +489,7 @@ class HUDIconButton(QPushButton):
         self._color = color
         self._icon_size = icon_size
         self._active = False
+        self._liquid_glass = liquid_glass  # 🆕 Nuevo parámetro
 
         if HAS_QTA:
             self.setIcon(qta.icon(icon_name, color=color))
@@ -509,90 +510,157 @@ class HUDIconButton(QPushButton):
         c_pri_color = QColor(C_PRI)
         r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
 
-        self.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-            }
-        """)
+        # 🆕 Si es Liquid Glass, aplicar estilo especial
+        if self._liquid_glass:
+            self.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(255, 255, 255, 0.10),
+                        stop:0.5 rgba(255, 255, 255, 0.05),
+                        stop:1 rgba(255, 255, 255, 0.02)
+                    );
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 18px;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(255, 255, 255, 0.18),
+                        stop:0.5 rgba(255, 255, 255, 0.10),
+                        stop:1 rgba(255, 255, 255, 0.05)
+                    );
+                    border: 1px solid rgba(255, 255, 255, 0.25);
+                }
+                QPushButton:pressed {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(255, 255, 255, 0.25),
+                        stop:0.5 rgba(255, 255, 255, 0.15),
+                        stop:1 rgba(255, 255, 255, 0.08)
+                    );
+                }
+            """)
+            
+            # Sombra glass más suave
+            self.glow.setBlurRadius(18)
+            self.glow.setColor(QColor(0, 0, 0, 40))
+            self.glow.setOffset(0, 2)
+        else:
+            self.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                }
+            """)
+            # Sombra normal
+            self.glow.setBlurRadius(18)
+            self.glow.setColor(QColor(self._color))
+            self.glow.setOffset(0, 0)
 
         # Set the icon color based on active status
         if HAS_QTA:
             if self._active:
-                # Active state: smoky logo color
                 c = QColor(r, g, b, 160)
                 self.setIcon(qta.icon(self._icon_name, color=c))
-                self.glow.setColor(c)
+                if not self._liquid_glass:
+                    self.glow.setColor(c)
             else:
-                # Normal state: gray / plomo
                 c = QColor("#d8dbe2")
                 self.setIcon(qta.icon(self._icon_name, color=c))
-                self.glow.setColor(c)
+                if not self._liquid_glass:
+                    self.glow.setColor(c)
 
     def set_active(self, active: bool, active_color: str = "#ffffff"):
         self._active = active
         self.update_style()
 
+    def set_liquid_glass(self, enabled: bool):
+        """Activa o desactiva el estilo Liquid Glass."""
+        self._liquid_glass = enabled
+        self.update_style()
+
     def enterEvent(self, event):
-        # Hover: strong white (glow!)
         if HAS_QTA:
-            self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
-            self.glow.setColor(QColor("#ffffff"))
+            if self._liquid_glass:
+                # En hover, el estilo Liquid Glass ya maneja el efecto
+                self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
+                self.glow.setColor(QColor(255, 255, 255, 30))
+            else:
+                self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
+                self.glow.setColor(QColor("#ffffff"))
             self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        # Back to normal or active color
         if HAS_QTA:
-            if self._active:
-                from ui import C_PRI
-                c_pri_color = QColor(C_PRI)
-                r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
-                c = QColor(r, g, b, 160)
-                self.setIcon(qta.icon(self._icon_name, color=c))
-                self.glow.setColor(c)
+            if self._liquid_glass:
+                # Volver al estado Liquid Glass
+                color = "#f59e0b" if self._active else "#d8dbe2"
+                self.setIcon(qta.icon(self._icon_name, color=color))
+                self.glow.setColor(QColor(0, 0, 0, 40))
             else:
-                c = QColor("#d8dbe2")
-                self.setIcon(qta.icon(self._icon_name, color=c))
-                self.glow.setColor(c)
+                if self._active:
+                    from ui import C_PRI
+                    c_pri_color = QColor(C_PRI)
+                    r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
+                    c = QColor(r, g, b, 160)
+                    self.setIcon(qta.icon(self._icon_name, color=c))
+                    self.glow.setColor(c)
+                else:
+                    c = QColor("#d8dbe2")
+                    self.setIcon(qta.icon(self._icon_name, color=c))
+                    self.glow.setColor(c)
             self.update()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            # Pressed: smoky logo color (darker)
             if HAS_QTA:
-                from ui import C_PRI
-                c_pri_color = QColor(C_PRI)
-                r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
-                c = QColor(r, g, b, 120)
-                self.setIcon(qta.icon(self._icon_name, color=c))
-                self.glow.setColor(c)
+                if self._liquid_glass:
+                    # Presionado: más opaco
+                    self.setIcon(qta.icon(self._icon_name, color=QColor(255, 255, 255, 100)))
+                    self.glow.setColor(QColor(255, 255, 255, 20))
+                else:
+                    from ui import C_PRI
+                    c_pri_color = QColor(C_PRI)
+                    r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
+                    c = QColor(r, g, b, 120)
+                    self.setIcon(qta.icon(self._icon_name, color=c))
+                    self.glow.setColor(c)
                 self.update()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            if self.underMouse():
-                # Release inside: back to hover (strong white)
-                if HAS_QTA:
-                    self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
-                    self.glow.setColor(QColor("#ffffff"))
-            else:
-                # Release outside: back to normal or active color
-                if HAS_QTA:
-                    if self._active:
-                        from ui import C_PRI
-                        c_pri_color = QColor(C_PRI)
-                        r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
-                        c = QColor(r, g, b, 160)
-                        self.setIcon(qta.icon(self._icon_name, color=c))
-                        self.glow.setColor(c)
+            if HAS_QTA:
+                if self.underMouse():
+                    # Release inside: hover
+                    if self._liquid_glass:
+                        self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
+                        self.glow.setColor(QColor(255, 255, 255, 30))
                     else:
-                        c = QColor("#d8dbe2")
-                        self.setIcon(qta.icon(self._icon_name, color=c))
-                        self.glow.setColor(c)
-            self.update()
+                        self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
+                        self.glow.setColor(QColor("#ffffff"))
+                else:
+                    # Release outside
+                    if self._liquid_glass:
+                        color = "#f59e0b" if self._active else "#d8dbe2"
+                        self.setIcon(qta.icon(self._icon_name, color=color))
+                        self.glow.setColor(QColor(0, 0, 0, 40))
+                    else:
+                        if self._active:
+                            from ui import C_PRI
+                            c_pri_color = QColor(C_PRI)
+                            r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
+                            c = QColor(r, g, b, 160)
+                            self.setIcon(qta.icon(self._icon_name, color=c))
+                            self.glow.setColor(c)
+                        else:
+                            c = QColor("#d8dbe2")
+                            self.setIcon(qta.icon(self._icon_name, color=c))
+                            self.glow.setColor(c)
+                self.update()
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
@@ -602,7 +670,7 @@ class HUDIconButton(QPushButton):
 
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
-        opt.icon = QIcon()  # Remove icon from style option to bypass default pressed darkening
+        opt.icon = QIcon()
 
         self.style().drawControl(QStyle.ControlElement.CE_PushButton, opt, painter, self)
 
@@ -678,31 +746,34 @@ class BottomLeftDock(QWidget):
 
         icon_color = "#d8dbe2"
 
-        # 🔔 Campana con círculo glass
+        # 🔔 CAMPANA CON LIQUID GLASS ✅
         self.btn_bell = HUDIconButton(
             'fa5s.bell',
             36,
             14,
             icon_color,
-            self
+            self,
+            liquid_glass=True  # 🆕 Activado
         )
 
-        # 📁 Carpeta CON CÍRCULO GLASS
+        # 📁 CARPETA NORMAL (sin Liquid Glass)
         self.btn_folder = HUDIconButton(
             'fa5s.folder',
             36,
             14,
             icon_color,
-            self
+            self,
+            liquid_glass=False  # 🆕 Desactivado
         )
 
-        # 📅 Calendario CON CÍRCULO GLASS
+        # 📅 CALENDARIO NORMAL (sin Liquid Glass)
         self.btn_calendar = HUDIconButton(
             'fa5s.calendar-alt',
             36,
             14,
             icon_color,
-            self
+            self,
+            liquid_glass=False  # 🆕 Desactivado
         )
 
         layout.addWidget(self.btn_bell)
@@ -717,22 +788,18 @@ class BottomLeftDock(QWidget):
         """)
 
     def set_notification(self, has_notif: bool):
-
+        """Cambia el color de la campana cuando hay notificaciones"""
         color = "#f59e0b" if has_notif else "#d8dbe2"
-
-        self.btn_bell._color = color
-        self.btn_bell.set_active(
-            has_notif,
-            "#f59e0b"
-        )
-
+        
         if HAS_QTA:
-            self.btn_bell.setIcon(
-                qta.icon(
-                    'fa5s.bell',
-                    color=color
-                )
-            )
+            self.btn_bell.setIcon(qta.icon('fa5s.bell', color=color))
+            
+        if has_notif:
+            self.btn_bell._active = True
+        else:
+            self.btn_bell._active = False
+        
+        self.btn_bell.update_style()
 
 
 class TopRightDock(QWidget):
@@ -861,94 +928,194 @@ class NotificationCard(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("NotifCard")
-        self.setFixedWidth(310)
+        self.setFixedWidth(340)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._max_notifications = 5
+        self._notification_count = 0
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._auto_hide)
+        self._animations = []  # Guardar referencias de animaciones
 
         # 🔥 GLASS CLEAN PRO
         self.setStyleSheet("""
         QWidget#NotifCard {
-            background: rgba(12,12,16,0.80);
+            background: rgba(12,12,16,0.85);
             border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 18px;
+            border-radius: 20px;
         }
         QLabel {
             background: transparent;
             border: none;
             color: rgba(245,245,250,0.96);
         }
+        QScrollArea {
+            background: transparent;
+            border: none;
+        }
+        QScrollBar:vertical {
+            border: none;
+            background: rgba(255,255,255,0.04);
+            width: 5px;
+            border-radius: 3px;
+            margin: 4px 2px;
+        }
+        QScrollBar::handle:vertical {
+            background: rgba(255,255,255,0.15);
+            min-height: 30px;
+            border-radius: 3px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: rgba(255,255,255,0.25);
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
         """)
 
         apply_glass_shadow(self, blur_radius=24, y_offset=6, alpha=120)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         # 🔔 HEADER
         hdr = QHBoxLayout()
+        hdr.setSpacing(10)
+        
         self.icon_lbl = QLabel()
-
         if HAS_QTA:
             self.icon_lbl.setPixmap(qta.icon('fa5s.bell', color='#ffffff').pixmap(14, 14))
 
         self.title_lbl = QLabel("Notificaciones")
-        self.title_lbl.setStyleSheet("font-size:11px; font-weight:700; color:#ffffff;")
+        self.title_lbl.setStyleSheet("font-size:12px; font-weight:700; color:#ffffff; letter-spacing: 0.5px;")
 
-        self.btn_close_notif = QPushButton("×")
-        self.btn_close_notif.setFixedSize(20, 20)
-        self.btn_close_notif.setStyleSheet("""
-        QPushButton {
-            background: transparent;
-            color: rgba(255,255,255,0.5);
-            border: none;
-            font-size: 14px;
-        }
-        QPushButton:hover {
-            color: #ffffff;
-        }
+        # Contador de notificaciones
+        self.badge_count = QLabel("0")
+        self.badge_count.setFixedSize(20, 20)
+        self.badge_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.badge_count.setStyleSheet("""
+            background: rgba(245, 158, 11, 0.85);
+            color: #000000;
+            border-radius: 10px;
+            font-size: 9px;
+            font-weight: 800;
         """)
+        self.badge_count.hide()
 
         hdr.addWidget(self.icon_lbl)
         hdr.addWidget(self.title_lbl)
         hdr.addStretch()
-        hdr.addWidget(self.btn_close_notif)
+        hdr.addWidget(self.badge_count)
 
+        self.btn_close_notif = QPushButton("×")
+        self.btn_close_notif.setFixedSize(24, 24)
+        self.btn_close_notif.setStyleSheet("""
+        QPushButton {
+            background: transparent;
+            color: rgba(255,255,255,0.4);
+            border: none;
+            font-size: 16px;
+            border-radius: 12px;
+        }
+        QPushButton:hover {
+            background: rgba(255,255,255,0.1);
+            color: #ffffff;
+        }
+        """)
+        self.btn_close_notif.clicked.connect(self.close)
+
+        hdr.addWidget(self.btn_close_notif)
         layout.addLayout(hdr)
 
-        # 🔥 SIN COLORES FEOS
-        self.default_item = self._make_item("NEXUS", "Sistema iniciado correctamente.")
-        self.update_item  = self._make_item("Actualización", "Nueva versión disponible.")
-        self.secure_item  = self._make_item("Sistema protegido", "Protección activa correctamente.")
+        # 📋 Contenedor para las notificaciones (SCROLL)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFixedHeight(220)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+        """)
+        
+        # Widget contenedor para las notificaciones
+        self.notif_container = QWidget()
+        self.notif_container.setStyleSheet("background: transparent;")
+        self.notif_layout = QVBoxLayout(self.notif_container)
+        self.notif_layout.setContentsMargins(2, 2, 2, 2)
+        self.notif_layout.setSpacing(8)
+        self.notif_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        self.scroll_area.setWidget(self.notif_container)
+        layout.addWidget(self.scroll_area)
 
-        layout.addWidget(self.default_item)
-        layout.addWidget(self.update_item)
-        layout.addWidget(self.secure_item)
+        self.notifications = []
+        self._add_default_notifications()
 
         self.layout_ref = layout
         self.hide()
 
+    def _add_default_notifications(self):
+        """Agrega las notificaciones por defecto al abrir el panel."""
+        self.clear_notifications()
+        self.push_notification("NEXUS", "Sistema iniciado correctamente.")
+        self.push_notification("Actualización", "Nueva versión disponible.")
+        self.push_notification("Sistema protegido", "Protección activa correctamente.")
+
+    def clear_notifications(self):
+        """Elimina todas las notificaciones del panel."""
+        # Limpiar animaciones pendientes
+        self._animations.clear()
+        
+        while self.notif_layout.count():
+            item = self.notif_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.notifications = []
+        self._notification_count = 0
+        self._update_badge()
+
     def _make_item(self, title: str, body: str, thumbnail_path=None) -> QFrame:
         frame = QFrame()
-
-        # 💎 ULTRA CLEAN (AQUÍ ESTABA EL PROBLEMA)
         frame.setObjectName("NotifItem")
         frame.setStyleSheet("""
         QFrame#NotifItem {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 10px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+        }
+        QFrame#NotifItem:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.12);
         }
         QLabel {
             background: transparent;
             border: none;
         }
         """)
+        
+        # Sombra sutil para cada item
+        item_shadow = QGraphicsDropShadowEffect(frame)
+        item_shadow.setBlurRadius(10)
+        item_shadow.setColor(QColor(0, 0, 0, 30))
+        item_shadow.setOffset(0, 2)
+        frame.setGraphicsEffect(item_shadow)
 
         fl = QHBoxLayout(frame)
-        fl.setContentsMargins(10, 8, 10, 8)
-        fl.setSpacing(10)
+        fl.setContentsMargins(12, 10, 12, 10)
+        fl.setSpacing(12)
+
+        # Thumbnail (si existe)
+        if thumbnail_path:
+            thumb = QLabel()
+            thumb.setFixedSize(36, 36)
+            thumb.setStyleSheet("border-radius: 8px; background: rgba(255,255,255,0.05);")
+            fl.addWidget(thumb)
 
         txt = QVBoxLayout()
+        txt.setSpacing(3)
 
         t = QLabel(title)
         t.setStyleSheet("""
@@ -957,6 +1124,7 @@ class NotificationCard(QWidget):
             font-size:11px;
             font-weight:700;
             color:#ffffff;
+            letter-spacing: 0.3px;
         """)
 
         b = QLabel(body)
@@ -965,44 +1133,145 @@ class NotificationCard(QWidget):
             background: transparent;
             border: none;
             font-size:10px;
-            color:rgba(255,255,255,0.85);
+            color:rgba(255,255,255,0.75);
         """)
 
         txt.addWidget(t)
         txt.addWidget(b)
 
-        fl.addLayout(txt)
+        fl.addLayout(txt, 1)
 
         return frame
 
+    def _update_badge(self):
+        """Actualiza el contador de notificaciones."""
+        count = len(self.notifications)
+        if count > 0:
+            self.badge_count.setText(str(count))
+            self.badge_count.show()
+        else:
+            self.badge_count.hide()
+
+    def _animate_item(self, widget):
+        """Animación de entrada para una notificación usando QTimer."""
+        from PyQt6.QtCore import QTimer
+        
+        # Guardar referencia para evitar que se recoja el garbage collector
+        self._animations.append(widget)
+        
+        # Ocultar inicialmente
+        widget.setGraphicsEffect(None)
+        widget.setWindowOpacity(0.0)
+        original_pos = widget.pos()
+        widget.move(original_pos.x(), original_pos.y() + 20)
+        
+        def step1():
+            widget.setWindowOpacity(0.3)
+            widget.move(original_pos.x(), original_pos.y() + 14)
+        
+        def step2():
+            widget.setWindowOpacity(0.6)
+            widget.move(original_pos.x(), original_pos.y() + 8)
+        
+        def step3():
+            widget.setWindowOpacity(0.85)
+            widget.move(original_pos.x(), original_pos.y() + 3)
+        
+        def step4():
+            widget.setWindowOpacity(1.0)
+            widget.move(original_pos.x(), original_pos.y())
+            # Limpiar referencia
+            if widget in self._animations:
+                self._animations.remove(widget)
+        
+        # Ejecutar animación por pasos con QTimer
+        timers = []
+        for delay, func in [(0, step1), (80, step2), (160, step3), (240, step4)]:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(func)
+            timer.start(delay)
+            timers.append(timer)
+
     def push_notification(self, title: str, body: str,
                           thumbnail_path=None, action_label: str = None, action_callback=None):
-
+        """Agrega una nueva notificación al panel."""
+        
+        # Si hay más de MAX_NOTIFICATIONS, eliminar la más antigua
+        if len(self.notifications) >= self._max_notifications:
+            oldest = self.notif_layout.takeAt(self.notif_layout.count() - 1)
+            if oldest and oldest.widget():
+                oldest.widget().deleteLater()
+            if self.notifications:
+                self.notifications.pop(-1)
+        
         item = self._make_item(title, body, thumbnail_path)
 
         if action_label and action_callback:
             btn = QPushButton(action_label)
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(28)
             btn.setStyleSheet("""
             QPushButton {
-                background: rgba(255,255,255,0.12);
+                background: rgba(255,255,255,0.08);
                 color: #ffffff;
                 border: none;
-                border-radius: 6px;
-                font-weight: 700;
+                border-radius: 8px;
+                font-weight: 600;
                 font-size: 10px;
-                padding: 0 10px;
+                padding: 0 14px;
             }
             QPushButton:hover {
-                background: rgba(255,255,255,0.20);
+                background: rgba(255,255,255,0.18);
             }
             """)
             btn.clicked.connect(action_callback)
             item.layout().addWidget(btn)
 
-        self.layout_ref.insertWidget(1, item)
+        # Insertar al principio (más reciente arriba)
+        self.notif_layout.insertWidget(0, item)
+        self.notifications.append(item)
+        self._notification_count += 1
+        self._update_badge()
+        
+        # Animación de entrada (usando el nuevo método sin painter)
+        self._animate_item(item)
+        
+        # Mostrar el panel si está oculto
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        
+        # Ajustar tamaño
         self.adjustSize()
-        self.show()
+        
+        # Scroll al inicio (más reciente)
+        self.scroll_area.verticalScrollBar().setValue(0)
+        
+        # Auto-ocultar después de 4 segundos si hay muchas notificaciones
+        if len(self.notifications) >= 3:
+            self._hide_timer.start(4000)
+
+    def _auto_hide(self):
+        """Auto-oculta el panel después de un tiempo."""
+        if self.isVisible() and len(self.notifications) >= 3:
+            self.close()
+
+    def showEvent(self, event):
+        """Cuando se muestra el panel, cargar notificaciones si está vacío."""
+        if self.notif_layout.count() == 0:
+            self._add_default_notifications()
+        super().showEvent(event)
+
+    def closeEvent(self, event):
+        """Cuando se cierra el panel, notificar al dock."""
+        # Limpiar animaciones pendientes
+        self._animations.clear()
+        
+        # Buscar el BottomLeftDock y actualizar el estado de la campana
+        main_window = self.window()
+        if main_window and hasattr(main_window, "bottom_left_dock"):
+            main_window.bottom_left_dock.set_notification(False)
+        super().closeEvent(event)
 
 
 class FloatingSpotifyWidget(QWidget):
@@ -1368,96 +1637,112 @@ class FloatingMediaWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("MediaFloat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(340, 100)
+        self.setFixedSize(360, 110)
         self.drag_position = None
         self._is_playing = False
         self._dur = 0
 
+        # ── ESTILO LIQUID GLASS PURO ──
         self.setStyleSheet('''
 QWidget#MediaFloat {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-        stop:0 rgba(22,20,30,0.92),
-        stop:1 rgba(14,12,22,0.95));
-    border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 22px;
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(255, 255, 255, 0.08),
+        stop:0.5 rgba(255, 255, 255, 0.04),
+        stop:1 rgba(255, 255, 255, 0.02)
+    );
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 24px;
 }
+
 QLabel {
     background: transparent;
     border: none;
-    color: rgba(245,245,250,0.95);
+    color: rgba(255, 255, 255, 0.90);
 }
+
 QPushButton {
     background: transparent;
     border: none;
-    border-radius: 14px;
+    border-radius: 16px;
 }
+
 QPushButton:hover {
-    background: rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.06);
 }
+
 QPushButton:pressed {
-    background: rgba(255,255,255,0.14);
+    background: rgba(255, 255, 255, 0.12);
 }
 ''')
-        apply_glass_shadow(self, blur_radius=40, y_offset=8, alpha=170)
+
+        # ── SOMBRA LIQUID GLASS ──
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(50)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(0, 10)
+        self.setGraphicsEffect(shadow)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 10)
-        root.setSpacing(7)
+        root.setContentsMargins(18, 14, 18, 12)
+        root.setSpacing(8)
 
-        # ── fila superior: carátula + info + indicador live ───────────────────
+        # ── FILA SUPERIOR ──
         top = QHBoxLayout()
-        top.setSpacing(11)
+        top.setSpacing(14)
         top.setContentsMargins(0, 0, 0, 0)
 
-        # carátula con borde sutil
+        # ✅ Carátula EXACTAMENTE del tamaño del ícono (sin padding extra)
         self.lbl_art = QLabel()
-        self.lbl_art.setFixedSize(44, 44)
+        self.lbl_art.setFixedSize(44, 44)  # Tamaño exacto
         self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_art.setStyleSheet("""
-            background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 rgba(120,180,255,0.12),
-                stop:0.5 rgba(80,140,255,0.08),
-                stop:1 rgba(60,100,220,0.15));
-            border: 1px solid rgba(120,180,255,0.20);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 10px;
         """)
         if HAS_QTA:
             self.lbl_art.setPixmap(
-                qta.icon('fa5b.youtube', color='rgba(140,190,255,0.85)').pixmap(22, 22)
+                qta.icon('fa5b.youtube', color='rgba(255,255,255,0.30)').pixmap(22, 22)
             )
         top.addWidget(self.lbl_art)
 
-        # columna info
+        # Columna info
         info = QVBoxLayout()
         info.setSpacing(1)
         info.setContentsMargins(0, 2, 0, 2)
 
         self.lbl_track = QLabel("Not Playing")
-        self.lbl_track.setStyleSheet(
-            "font-size:12px; font-weight:700; color:#ffffff; letter-spacing:0.3px;"
-        )
+        self.lbl_track.setStyleSheet("""
+            font-size:13px;
+            font-weight:600;
+            color: rgba(255,255,255,0.95);
+            letter-spacing: 0.3px;
+        """)
         self.lbl_track.setMaximumWidth(200)
 
         self.lbl_artist = QLabel("Windows Media")
-        self.lbl_artist.setStyleSheet(
-            "font-size:10px; color:rgba(190,185,215,0.60); letter-spacing:0.2px;"
-        )
+        self.lbl_artist.setStyleSheet("""
+            font-size:11px;
+            color: rgba(255,255,255,0.45);
+            letter-spacing: 0.2px;
+        """)
         self.lbl_artist.setMaximumWidth(200)
 
         info.addWidget(self.lbl_track)
         info.addWidget(self.lbl_artist)
         top.addLayout(info, 1)
 
-        # punto verde "live" / indicador de estado
+        # Punto de estado
         self.dot = QLabel("●")
-        self.dot.setFixedSize(14, 14)
+        self.dot.setFixedSize(16, 16)
         self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.50);")
+        self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
         top.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignTop)
 
         root.addLayout(top)
 
-        # ── barra de progreso ─────────────────────────────────────────────────
+        # ── BARRA DE PROGRESO ──
         self.prog_bar = QProgressBar()
         self.prog_bar.setRange(0, 1000)
         self.prog_bar.setValue(0)
@@ -1465,27 +1750,33 @@ QPushButton:pressed {
         self.prog_bar.setFixedHeight(3)
         self.prog_bar.setStyleSheet('''
 QProgressBar {
-    background: rgba(255,255,255,0.07);
+    background: rgba(255, 255, 255, 0.06);
     border: none;
     border-radius: 2px;
 }
 QProgressBar::chunk {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-        stop:0 rgba(200,160,255,0.90),
-        stop:1 rgba(140,100,255,0.70));
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(255, 255, 255, 0.60),
+        stop:1 rgba(255, 255, 255, 0.30)
+    );
     border-radius: 2px;
 }
 ''')
         self.prog_bar.mousePressEvent = self._on_prog_click
 
         self.lbl_time_l = QLabel("0:00")
-        self.lbl_time_l.setStyleSheet(
-            "font-size:8px; color:rgba(190,185,215,0.40); font-variant-numeric:tabular-nums;"
-        )
+        self.lbl_time_l.setStyleSheet("""
+            font-size:8px;
+            color: rgba(255,255,255,0.25);
+            font-variant-numeric:tabular-nums;
+        """)
         self.lbl_time_r = QLabel("0:00")
-        self.lbl_time_r.setStyleSheet(
-            "font-size:8px; color:rgba(190,185,215,0.40); font-variant-numeric:tabular-nums;"
-        )
+        self.lbl_time_r.setStyleSheet("""
+            font-size:8px;
+            color: rgba(255,255,255,0.25);
+            font-variant-numeric:tabular-nums;
+        """)
 
         prog_row = QHBoxLayout()
         prog_row.setSpacing(6)
@@ -1495,7 +1786,7 @@ QProgressBar::chunk {
         prog_row.addWidget(self.lbl_time_r)
         root.addLayout(prog_row)
 
-        # ── controles centrados ───────────────────────────────────────────────
+        # ── CONTROLES ──
         ctrl = QHBoxLayout()
         ctrl.setSpacing(4)
         ctrl.setContentsMargins(0, 0, 0, 0)
@@ -1503,39 +1794,39 @@ QProgressBar::chunk {
 
         if HAS_QTA:
             self.btn_prev = QPushButton()
-            self.btn_prev.setFixedSize(28, 28)
+            self.btn_prev.setFixedSize(32, 32)
             self.btn_prev.setIcon(
-                qta.icon('fa5s.step-backward', color='rgba(200,195,230,0.65)')
+                qta.icon('fa5s.step-backward', color='rgba(255,255,255,0.40)')
             )
-            self.btn_prev.setIconSize(QSize(13, 13))
+            self.btn_prev.setIconSize(QSize(14, 14))
 
             self.btn_play = QPushButton()
-            self.btn_play.setFixedSize(36, 36)
+            self.btn_play.setFixedSize(40, 40)
             self.btn_play.setStyleSheet("""
                 QPushButton {
-                    background: rgba(180,138,255,0.18);
-                    border: 1px solid rgba(180,138,255,0.30);
-                    border-radius: 18px;
+                    background: rgba(255, 255, 255, 0.06);
+                    border: 1px solid rgba(255, 255, 255, 0.10);
+                    border-radius: 20px;
                 }
                 QPushButton:hover {
-                    background: rgba(180,138,255,0.28);
-                    border-color: rgba(180,138,255,0.55);
+                    background: rgba(255, 255, 255, 0.10);
+                    border-color: rgba(255, 255, 255, 0.20);
                 }
                 QPushButton:pressed {
-                    background: rgba(180,138,255,0.40);
+                    background: rgba(255, 255, 255, 0.16);
                 }
             """)
             self.btn_play.setIcon(
-                qta.icon('fa5s.play', color='rgba(220,200,255,0.95)')
+                qta.icon('fa5s.play', color='rgba(255,255,255,0.80)')
             )
-            self.btn_play.setIconSize(QSize(14, 14))
+            self.btn_play.setIconSize(QSize(16, 16))
 
             self.btn_next = QPushButton()
-            self.btn_next.setFixedSize(28, 28)
+            self.btn_next.setFixedSize(32, 32)
             self.btn_next.setIcon(
-                qta.icon('fa5s.step-forward', color='rgba(200,195,230,0.65)')
+                qta.icon('fa5s.step-forward', color='rgba(255,255,255,0.40)')
             )
-            self.btn_next.setIconSize(QSize(13, 13))
+            self.btn_next.setIconSize(QSize(14, 14))
 
             ctrl.addWidget(self.btn_prev)
             ctrl.addWidget(self.btn_play)
@@ -1551,7 +1842,7 @@ QProgressBar::chunk {
         self.hide()
         QTimer.singleShot(100, self.load_position)
 
-    # ── métodos ───────────────────────────────────────────────────────────────
+    # ── MÉTODOS ──
     def update_timeline(self, pos, dur):
         self._dur = dur
         self.prog_bar.setValue(int(pos / dur * 1000) if dur else 0)
@@ -1567,26 +1858,25 @@ QProgressBar::chunk {
         if not title:
             self.lbl_track.setText("Not Playing")
             self.lbl_artist.setText("Windows Media")
-            self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.45);")
+            self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
             self._is_playing = False
             return
 
         self._is_playing = is_playing
-        self.lbl_track.setText(title[:28] + ("…" if len(title) > 28 else ""))
-        self.lbl_artist.setText(artist[:28] + ("…" if len(artist) > 28 else ""))
+        self.lbl_track.setText(title[:30] + ("…" if len(title) > 30 else ""))
+        self.lbl_artist.setText(artist[:30] + ("…" if len(artist) > 30 else ""))
 
-        # punto de estado: verde si playing, gris si pausado
         if is_playing:
-            self.dot.setStyleSheet("font-size:8px; color:rgba(80,220,120,0.80);")
+            self.dot.setStyleSheet("font-size:8px; color:rgba(80, 220, 120, 0.70);")
         else:
-            self.dot.setStyleSheet("font-size:8px; color:rgba(80,80,100,0.45);")
+            self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
 
         if HAS_QTA:
             icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
             self.btn_play.setIcon(
-                qta.icon(icon_name, color='rgba(220,200,255,0.95)')
+                qta.icon(icon_name, color='rgba(255,255,255,0.80)')
             )
-            self.btn_play.setIconSize(QSize(14, 14))
+            self.btn_play.setIconSize(QSize(16, 16))
 
     def _press(self, key):
         try:
@@ -1638,31 +1928,174 @@ class PillChatBar(QWidget):
         super().__init__(parent)
         self.setObjectName("PillChatBar")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedHeight(56)
-        layout = QHBoxLayout(self); layout.setContentsMargins(20, 0, 14, 0); layout.setSpacing(10)
+        self.setFixedHeight(52)  # Un poco más compacto
+        
+        # ─── ESTILO LIQUID GLASS CIRCULAR ───
+        self.setStyleSheet("""
+            QWidget#PillChatBar {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 255, 255, 0.10),
+                    stop:0.5 rgba(255, 255, 255, 0.05),
+                    stop:1 rgba(255, 255, 255, 0.02)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 30px;
+            }
+            QLineEdit {
+                background: transparent;
+                border: none;
+                color: rgba(255, 255, 255, 0.90);
+                font-size: 14px;
+                padding: 0 4px;
+                font-family: 'Segoe UI', 'Inter', sans-serif;
+            }
+            QLineEdit::placeholder {
+                color: rgba(255, 255, 255, 0.35);
+                font-weight: 400;
+            }
+            QPushButton {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(168, 85, 247, 0.20),
+                    stop:1 rgba(139, 92, 246, 0.10)
+                );
+                border: 1px solid rgba(168, 85, 247, 0.25);
+                border-radius: 19px;
+                color: rgba(255, 255, 255, 0.80);
+            }
+            QPushButton:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(168, 85, 247, 0.35),
+                    stop:1 rgba(139, 92, 246, 0.20)
+                );
+                border: 1px solid rgba(168, 85, 247, 0.45);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(168, 85, 247, 0.50),
+                    stop:1 rgba(139, 92, 246, 0.30)
+                );
+            }
+        """)
+        
+        # ─── SOMBRA LIQUID GLASS ───
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+        
+        # Layout principal
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 4, 6, 4)
+        layout.setSpacing(8)
+        
+        # ─── INPUT ───
         self.inp = QLineEdit()
         self.inp.setPlaceholderText("Escribe un mensaje…")
         self.inp.setFont(QFont(FONT_FAMILY, 13))
         self.inp.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.inp.returnPressed.connect(self._submit)
-        self.inp.setStyleSheet("QLineEdit {background: transparent;border: none;color: white;font-size: 14px;}")
+        self.inp.setStyleSheet("""
+            QLineEdit {
+                background: transparent;
+                border: none;
+                color: rgba(255, 255, 255, 0.90);
+                font-size: 13px;
+                padding: 8px 4px;
+            }
+            QLineEdit::placeholder {
+                color: rgba(255, 255, 255, 0.35);
+            }
+        """)
         layout.addWidget(self.inp)
+        
+        # ─── BOTÓN ENVIAR ───
+        self.btn_send = QPushButton()
+        self.btn_send.setFixedSize(40, 40)
+        self.btn_send.setCursor(Qt.CursorShape.PointingHandCursor)
+        
         if HAS_QTA:
-            self.btn_send = QPushButton(); self.btn_send.setFixedSize(38, 38)
-            self.btn_send.setIcon(qta.icon('fa5s.paper-plane', color='rgba(200,200,210,0.70)')); self.btn_send.setIconSize(QSize(17, 17))
-            self.btn_send.setStyleSheet("QPushButton{background:transparent;border:none;}QPushButton:hover{color:white;}")
-            self.btn_send.clicked.connect(self._submit); layout.addWidget(self.btn_send)
-        self.setStyleSheet("QWidget#PillChatBar {background: rgba(20,20,24,0.72);border: 1px solid rgba(255,255,255,0.14);border-radius: 28px;}")
-        apply_glass_shadow(self, blur_radius=14, y_offset=3, alpha=110)
+            self.btn_send.setIcon(qta.icon('fa5s.paper-plane', color='rgba(255,255,255,0.70)'))
+            self.btn_send.setIconSize(QSize(18, 18))
+        
+        self.btn_send.clicked.connect(self._submit)
+        layout.addWidget(self.btn_send)
+        
+        # Efecto de brillo en el borde (opcional)
+        self._glow_timer = QTimer(self)
+        self._glow_timer.timeout.connect(self._update_glow)
+        self._glow_timer.start(2000)
+        self._glow_state = 0
+        
         self.hide()
+    
+    def _update_glow(self):
+        """Efecto de brillo pulsante en el borde."""
+        self._glow_state = (self._glow_state + 1) % 4
+        if self._glow_state == 0:
+            self.setStyleSheet(self.styleSheet().replace(
+                'border: 1px solid rgba(255, 255, 255, 0.12);',
+                'border: 1px solid rgba(168, 85, 247, 0.25);'
+            ))
+        elif self._glow_state == 2:
+            self.setStyleSheet(self.styleSheet().replace(
+                'border: 1px solid rgba(168, 85, 247, 0.25);',
+                'border: 1px solid rgba(255, 255, 255, 0.12);'
+            ))
 
     def _submit(self):
         text = self.inp.text().strip()
-        if text: self.submitted.emit(text); self.inp.clear()
+        if text:
+            self.submitted.emit(text)
+            self.inp.clear()
+            # Pequeña animación al enviar
+            self.btn_send.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(53, 212, 147, 0.30),
+                        stop:1 rgba(53, 212, 147, 0.15)
+                    );
+                    border: 1px solid rgba(53, 212, 147, 0.35);
+                    border-radius: 19px;
+                }
+            """)
+            QTimer.singleShot(300, lambda: self.btn_send.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(168, 85, 247, 0.20),
+                        stop:1 rgba(139, 92, 246, 0.10)
+                    );
+                    border: 1px solid rgba(168, 85, 247, 0.25);
+                    border-radius: 19px;
+                }
+            """))
 
     def toggle(self):
-        if self.isVisible(): self.hide()
-        else: self.show(); self.inp.setFocus()
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+            self.inp.setFocus()
+            self.inp.selectAll()
+    
+    def showEvent(self, event):
+        """Cuando se muestra, enfocar el input."""
+        super().showEvent(event)
+        self.inp.setFocus()
+    
+    def keyPressEvent(self, event):
+        """Cerrar con Escape."""
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+        else:
+            super().keyPressEvent(event)
 
 
 class HUDCalendarWidget(QWidget):
@@ -1670,37 +2103,273 @@ class HUDCalendarWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("CalendarPop")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(230, 190)
-        self.setStyleSheet("QWidget#CalendarPop {background: rgba(18,18,22,0.88);border: 1px solid rgba(255,255,255,0.12);border-radius: 16px;}QLabel { background: transparent; border: none; color: rgba(220,220,230,0.9); }")
-        apply_glass_shadow(self, blur_radius=18, y_offset=5, alpha=120)
-        layout = QVBoxLayout(self); layout.setContentsMargins(14, 12, 14, 12); layout.setSpacing(8)
+        self.setFixedSize(260, 230)  # Un poco más grande para mejor legibilidad
+        
+        # ─── ESTILO LIQUID GLASS MEJORADO ───
+        self.setStyleSheet("""
+            QWidget#CalendarPop {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(20, 18, 30, 0.92),
+                    stop:0.5 rgba(16, 14, 24, 0.88),
+                    stop:1 rgba(12, 10, 20, 0.92)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 20px;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+                color: rgba(230, 230, 240, 0.95);
+                font-family: 'Segoe UI', 'Inter', sans-serif;
+            }
+        """)
+        
+        # ─── SOMBRA LIQUID GLASS ───
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(50)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setOffset(0, 10)
+        self.setGraphicsEffect(shadow)
+        
+        # Layout principal
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        
+        # Fecha actual
         now = datetime.now()
-        month_lbl = QLabel(now.strftime("%B %Y").upper())
-        month_lbl.setStyleSheet("font-size:10px;font-weight:700;letter-spacing:1px;color:rgba(200,200,210,0.80);")
-        month_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(month_lbl)
+        
+        # ─── HEADER con mes y año ───
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        
+        # Flecha izquierda
+        self.btn_prev = QPushButton("◀")
+        self.btn_prev.setFixedSize(28, 28)
+        self.btn_prev.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.04);
+                color: rgba(200,200,210,0.6);
+                border: 1px solid rgba(255,255,255,0.06);
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.10);
+                color: #ffffff;
+                border-color: rgba(255,255,255,0.15);
+            }
+        """)
+        self.btn_prev.clicked.connect(self._prev_month)
+        header.addWidget(self.btn_prev)
+        
+        # Mes y año
+        self.month_lbl = QLabel(now.strftime("%B %Y").upper())
+        self.month_lbl.setStyleSheet("""
+            font-size:13px;
+            font-weight:700;
+            letter-spacing:2px;
+            color: rgba(255,255,255,0.90);
+        """)
+        self.month_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(self.month_lbl, 1)
+        
+        # Flecha derecha
+        self.btn_next = QPushButton("▶")
+        self.btn_next.setFixedSize(28, 28)
+        self.btn_next.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.04);
+                color: rgba(200,200,210,0.6);
+                border: 1px solid rgba(255,255,255,0.06);
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.10);
+                color: #ffffff;
+                border-color: rgba(255,255,255,0.15);
+            }
+        """)
+        self.btn_next.clicked.connect(self._next_month)
+        header.addWidget(self.btn_next)
+        
+        layout.addLayout(header)
+        
+        # ─── DÍAS DE LA SEMANA ───
         days_hdr = QHBoxLayout()
-        for d in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]:
-            l = QLabel(d); l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            l.setStyleSheet("font-size:9px;color:rgba(150,150,160,0.60);font-weight:600;")
+        days_hdr.setSpacing(4)
+        for d in ["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"]:
+            l = QLabel(d)
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setStyleSheet("""
+                font-size:9px;
+                color:rgba(180,180,200,0.50);
+                font-weight:700;
+                letter-spacing:0.8px;
+            """)
+            l.setFixedSize(28, 18)
             days_hdr.addWidget(l)
         layout.addLayout(days_hdr)
+        
+        # ─── DÍAS DEL MES ───
+        self.days_layout = QVBoxLayout()
+        self.days_layout.setSpacing(4)
+        layout.addLayout(self.days_layout)
+        
+        # Guardar año y mes actual
+        self._year = now.year
+        self._month = now.month
+        self._today = now.day
+        
+        # Generar días
+        self._update_calendar()
+        
+        self.hide()
+    
+    def _update_calendar(self):
+        """Actualiza el calendario con el mes actual."""
         import calendar
-        cal = calendar.monthcalendar(now.year, now.month)
+        
+        # Limpiar días existentes
+        while self.days_layout.count():
+            item = self.days_layout.takeAt(0)
+            if item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Generar nuevo calendario
+        cal = calendar.monthcalendar(self._year, self._month)
+        
         for week in cal:
             row = QHBoxLayout()
+            row.setSpacing(4)
+            
             for day in week:
                 if day == 0:
                     l = QLabel("")
+                    l.setFixedSize(28, 26)
                 else:
                     l = QLabel(str(day))
-                    if day == now.day:
-                        l.setStyleSheet("background: rgba(168,85,247,0.40);border-radius: 10px;font-size:9px; font-weight:700;color: white;")
+                    l.setFixedSize(28, 26)
+                    l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    
+                    # Verificar si es hoy
+                    is_today = (day == self._today and 
+                               self._year == datetime.now().year and 
+                               self._month == datetime.now().month)
+                    
+                    # Verificar si es fin de semana (sábado o domingo)
+                    # Calcular día de la semana para este día
+                    day_of_week = datetime(self._year, self._month, day).weekday()
+                    is_weekend = day_of_week >= 5  # 5=sábado, 6=domingo
+                    
+                    if is_today:
+                        # Día actual - destacado con morado
+                        l.setStyleSheet("""
+                            background: qlineargradient(
+                                x1:0, y1:0, x2:1, y2:1,
+                                stop:0 rgba(168,85,247,0.55),
+                                stop:1 rgba(139,92,246,0.35)
+                            );
+                            border: 1px solid rgba(168,85,247,0.30);
+                            border-radius: 13px;
+                            font-size:11px;
+                            font-weight:800;
+                            color: #ffffff;
+                        """)
+                    elif is_weekend:
+                        # Fin de semana - color más suave
+                        l.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:500;
+                            color: rgba(200,200,220,0.45);
+                            border-radius: 13px;
+                        """)
+                        # Hover effect para fines de semana
+                        l.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+                        l.enterEvent = lambda e, w=l: w.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:500;
+                            color: rgba(255,255,255,0.70);
+                            background: rgba(255,255,255,0.04);
+                            border-radius: 13px;
+                        """)
+                        l.leaveEvent = lambda e, w=l: w.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:500;
+                            color: rgba(200,200,220,0.45);
+                            border-radius: 13px;
+                        """)
                     else:
-                        l.setStyleSheet("font-size:9px;color:rgba(200,200,210,0.70);")
-                l.setAlignment(Qt.AlignmentFlag.AlignCenter); l.setFixedSize(22, 20); row.addWidget(l)
-            layout.addLayout(row)
-        self.hide()
+                        # Días normales
+                        l.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:500;
+                            color: rgba(220,220,230,0.80);
+                            border-radius: 13px;
+                        """)
+                        # Hover effect para días normales
+                        l.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+                        l.enterEvent = lambda e, w=l: w.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:600;
+                            color: rgba(255,255,255,0.95);
+                            background: rgba(255,255,255,0.08);
+                            border-radius: 13px;
+                        """)
+                        l.leaveEvent = lambda e, w=l: w.setStyleSheet("""
+                            font-size:10px;
+                            font-weight:500;
+                            color: rgba(220,220,230,0.80);
+                            border-radius: 13px;
+                        """)
+                
+                row.addWidget(l)
+            
+            self.days_layout.addLayout(row)
+        
+        # Actualizar título del mes en español
+        month_names = {
+            1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
+            5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
+            9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE"
+        }
+        self.month_lbl.setText(f"{month_names.get(self._month, '')} {self._year}")
+    
+    def _prev_month(self):
+        """Va al mes anterior."""
+        if self._month == 1:
+            self._month = 12
+            self._year -= 1
+        else:
+            self._month -= 1
+        self._update_calendar()
+    
+    def _next_month(self):
+        """Va al mes siguiente."""
+        if self._month == 12:
+            self._month = 1
+            self._year += 1
+        else:
+            self._month += 1
+        self._update_calendar()
+    
+    def showEvent(self, event):
+        """Cuando se muestra, actualizar al mes actual."""
+        now = datetime.now()
+        self._year = now.year
+        self._month = now.month
+        self._today = now.day
+        self._update_calendar()
+        super().showEvent(event)
 
 class TodoWidget(QWidget):
     def __init__(self, parent=None):
