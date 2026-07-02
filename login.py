@@ -17,7 +17,10 @@ if sys.platform == "win32" and ctypes.windll.kernel32.IsDebuggerPresent():
     sys.exit(1)
 
 # Paths
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = BASE_DIR / "config"
 LICENSE_INFO_PATH = CONFIG_DIR / "license.json"
 
@@ -408,10 +411,15 @@ class LoginWindow(QDialog):
             except Exception:
                 pass
 
-    def save_license_locally(self, key: str, email: str = ""):
+    def save_license_locally(self, key: str, email: str = "", days_remaining=None, created_at=None):
         if self.chk_remember.isChecked():
             try:
-                data = {"license_key": key, "email": email}
+                data = {
+                    "license_key": key,
+                    "email": email,
+                    "days_remaining": days_remaining,
+                    "created_at": created_at
+                }
                 LICENSE_INFO_PATH.write_text(json.dumps(data, indent=4), encoding="utf-8")
             except Exception:
                 pass
@@ -478,7 +486,12 @@ class LoginWindow(QDialog):
             sig = res.get("signature", "FALLBACK_SIG")
             self.aes_token = hashlib.sha256(f"ILUM_AES_TOKEN_{sig}_{key}".encode()).hexdigest()
             
-            self.save_license_locally(key, res.get("email", ""))
+            self.save_license_locally(
+                key,
+                res.get("email", ""),
+                days_remaining=res.get("days_remaining"),
+                created_at=res.get("created_at")
+            )
             self.start_update_verification(key)
         else:
             self.set_status(res.get("message"), is_error=True)

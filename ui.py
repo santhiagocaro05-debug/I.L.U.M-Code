@@ -46,6 +46,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
 from shop import ShopWidget
+from core.media_monitor import MediaMonitorWorker
 
 try:
     import qtawesome as qta
@@ -1280,7 +1281,7 @@ QPushButton:hover {
             sp = spotipy.Spotify(auth_manager=sp_oauth)
             curr = sp.current_playback()
 
-            if curr and curr.get("item") and curr.get("is_playing"):
+            if curr and curr.get("item"):
                 if not self.isVisible() and hasattr(self.window(), "animate_show_widget"):
                     self.window().animate_show_widget(self)
                 item = curr["item"]
@@ -1356,6 +1357,150 @@ QPushButton:hover {
                 print(f"[Spotify] ✅ Posición guardada: X={self.x()}, Y={self.y()}")
             except Exception as e:
                 print(f"[Spotify] ❌ Error guardando posición: {e}")
+            self.drag_position = None
+        super().mouseReleaseEvent(event)
+
+
+class FloatingMediaWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MediaFloat")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(320, 90)
+        self.drag_position = None
+        self._is_playing = False
+
+        self.setStyleSheet('''
+QWidget#MediaFloat {
+    background: rgba(18,18,22,0.85);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 20px;
+}
+QLabel {
+    background: transparent;
+    border: none;
+    color: rgba(245,245,250,0.96);
+}
+QPushButton {
+    background: transparent;
+    border: none;
+}
+QPushButton:hover {
+    background: rgba(255,255,255,0.06);
+    border-radius: 15px;
+}
+''')
+        apply_glass_shadow(self, blur_radius=30, y_offset=6, alpha=150)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(12)
+
+        self.lbl_art = QLabel()
+        self.lbl_art.setFixedSize(40, 40)
+        self.lbl_art.setStyleSheet("background: rgba(255,255,255,0.06); border-radius: 8px;")
+        self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if HAS_QTA:
+            self.lbl_art.setPixmap(qta.icon('fa5b.youtube', color='rgba(255,20,20,0.8)').pixmap(20, 20))
+        layout.addWidget(self.lbl_art)
+
+        right = QVBoxLayout()
+        right.setSpacing(2)
+
+        self.lbl_track = QLabel("Not Playing")
+        self.lbl_track.setStyleSheet("font-size:11px; font-weight:600; color:#ffffff;")
+        self.lbl_artist = QLabel("Windows Media")
+        self.lbl_artist.setStyleSheet("font-size:10px; color:rgba(200,200,210,0.70);")
+
+        right.addWidget(self.lbl_track)
+        right.addWidget(self.lbl_artist)
+        
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(10)
+        ctrl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        if HAS_QTA:
+            self.btn_prev = QPushButton()
+            self.btn_prev.setFixedSize(24, 24)
+            self.btn_prev.setIcon(qta.icon('fa5s.step-backward', color='rgba(220,220,230,0.85)'))
+            
+            self.btn_play = QPushButton()
+            self.btn_play.setFixedSize(28, 28)
+            self.btn_play.setIcon(qta.icon('fa5s.play', color='rgba(255,255,255,0.95)'))
+            
+            self.btn_next = QPushButton()
+            self.btn_next.setFixedSize(24, 24)
+            self.btn_next.setIcon(qta.icon('fa5s.step-forward', color='rgba(220,220,230,0.85)'))
+
+            ctrl.addWidget(self.btn_prev)
+            ctrl.addWidget(self.btn_play)
+            ctrl.addWidget(self.btn_next)
+            
+            self.btn_prev.clicked.connect(lambda: self._press("prevtrack"))
+            self.btn_play.clicked.connect(lambda: self._press("playpause"))
+            self.btn_next.clicked.connect(lambda: self._press("nexttrack"))
+
+        right.addLayout(ctrl)
+        layout.addLayout(right)
+
+        self.hide()
+        QTimer.singleShot(100, self.load_position)
+
+    def update_info(self, title, artist, is_playing, thumb):
+        if not title:
+            self.lbl_track.setText("Not Playing")
+            self.lbl_artist.setText("Windows Media")
+            self._is_playing = False
+            return
+
+        self._is_playing = is_playing
+        name = title[:30] + ("..." if len(title) > 30 else "")
+        art = artist[:30] + ("..." if len(artist) > 30 else "")
+        self.lbl_track.setText(name)
+        self.lbl_artist.setText(art)
+
+        if HAS_QTA:
+            icon = 'fa5s.pause' if is_playing else 'fa5s.play'
+            self.btn_play.setIcon(qta.icon(icon, color='rgba(255,255,255,0.95)'))
+
+    def _press(self, key):
+        try:
+            import pyautogui
+            pyautogui.press(key)
+        except Exception:
+            pass
+
+    def load_position(self):
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys()
+            w_name = self.__class__.__name__
+            x = cfg.get(f"widget_pos_{w_name}_x")
+            y = cfg.get(f"widget_pos_{w_name}_y")
+            if x is not None and y is not None:
+                self.move(int(x), int(y))
+        except Exception:
+            pass
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position is not None:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.drag_position is not None:
+            try:
+                from memory.config_manager import load_api_keys, save_api_keys
+                cfg = load_api_keys()
+                w_name = self.__class__.__name__
+                cfg[f"widget_pos_{w_name}_x"] = self.x()
+                cfg[f"widget_pos_{w_name}_y"] = self.y()
+                save_api_keys(cfg)
+            except Exception:
+                pass
             self.drag_position = None
         super().mouseReleaseEvent(event)
 
@@ -2943,7 +3088,11 @@ class DeviceSettingsDialog(QFrame):
         self.lbl_user_email = QLabel("Email: No registrado")
         self.lbl_user_email.setStyleSheet("font-size: 12px; color: rgba(255, 255, 255, 0.6); background: transparent;")
         details_layout.addWidget(self.lbl_user_email)
-        
+
+        self.lbl_user_license = QLabel("Licencia: —")
+        self.lbl_user_license.setStyleSheet("font-size: 12px; color: rgba(255, 255, 255, 0.6); background: transparent;")
+        details_layout.addWidget(self.lbl_user_license)
+
         self.lbl_user_stats = QLabel("Sin estadísticas de uso.")
         self.lbl_user_stats.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 0.4); background: transparent;")
         details_layout.addWidget(self.lbl_user_stats)
@@ -3789,6 +3938,7 @@ class DeviceSettingsDialog(QFrame):
         layout2 = card2.content_layout
         
         self.chk_widget_spotify = QCheckBox("Mostrar Widget Spotify Flotante")
+        self.chk_widget_media = QCheckBox("Mostrar Widget YouTube/Medios (Universal)")
         self.chk_widget_weather = QCheckBox("Mostrar Widget del Clima")
         self.chk_widget_notifications = QCheckBox("Mostrar Panel de Notificaciones")
         self.chk_widget_calendar = QCheckBox("Mostrar Calendario")
@@ -3797,7 +3947,7 @@ class DeviceSettingsDialog(QFrame):
         self.chk_widget_notes = QCheckBox("Mostrar Widget de Notas")
         self.chk_widget_files = QCheckBox("Mostrar Panel de Archivos/Macros")
 
-        widgets = [self.chk_widget_spotify, self.chk_widget_weather, self.chk_widget_notifications,
+        widgets = [self.chk_widget_spotify, self.chk_widget_media, self.chk_widget_weather, self.chk_widget_notifications,
                    self.chk_widget_calendar, self.chk_widget_system, self.chk_widget_todo,
                    self.chk_widget_notes, self.chk_widget_files]
         for i, w in enumerate(widgets):
@@ -4642,10 +4792,36 @@ class DeviceSettingsDialog(QFrame):
                         self.lbl_user_email.setText(f"Licencia vinculada: {email}")
                     else:
                         self.lbl_user_email.setText("Licencia local activa")
+
+                    key = lic.get("license_key", "")
+                    days_remaining = lic.get("days_remaining")
+
+                    if key:
+                        # Mostrar la key ofuscada en el medio, ej: ILUM-7MZV-****-5J06
+                        parts = key.split("-")
+                        if len(parts) >= 2:
+                            masked_key = f"{parts[0]}-{parts[1]}-****-{parts[-1]}"
+                        else:
+                            masked_key = key
+                    else:
+                        masked_key = "No disponible"
+
+                    if days_remaining is None:
+                        days_txt = "de por vida ✦"
+                    elif days_remaining <= 0:
+                        days_txt = "expirada"
+                    elif days_remaining == 1:
+                        days_txt = "1 día"
+                    else:
+                        days_txt = f"{days_remaining} días"
+
+                    self.lbl_user_license.setText(f"Key: {masked_key}  ·  Vence en: {days_txt}")
                 else:
                     self.lbl_user_email.setText("Licencia no registrada (Modo Demo)")
+                    self.lbl_user_license.setText("Licencia: —")
             except Exception:
                 self.lbl_user_email.setText("Licencia activa")
+                self.lbl_user_license.setText("Licencia: —")
 
             try:
                 profile = self.load_user_profile()
@@ -4711,6 +4887,7 @@ class DeviceSettingsDialog(QFrame):
 
             # Cargar visibilidad de widgets
             self.chk_widget_spotify.setChecked(cfg.get("show_widget_spotify", False))
+            self.chk_widget_media.setChecked(cfg.get("show_widget_media", False))
             self.chk_widget_weather.setChecked(cfg.get("show_widget_weather", False))
             self.chk_widget_notifications.setChecked(cfg.get("show_widget_notifications", False))
             self.chk_widget_calendar.setChecked(cfg.get("show_widget_calendar", False))
@@ -4800,6 +4977,7 @@ class DeviceSettingsDialog(QFrame):
                 "ilum_sticker_w": self.sld_sticker_w.value(),
                 "ilum_sticker_h": self.sld_sticker_h.value(),
                 "show_widget_spotify": self.chk_widget_spotify.isChecked(),
+                "show_widget_media": self.chk_widget_media.isChecked(),
                 "show_widget_weather": self.chk_widget_weather.isChecked(),
                 "show_widget_notifications": self.chk_widget_notifications.isChecked(),
                 "show_widget_calendar": self.chk_widget_calendar.isChecked(),
@@ -4943,6 +5121,7 @@ class MainWindow(QMainWindow):
 
         # ── WIDGETS FLOTANTES ──────────────────────────────────────────────
         self.spotify_float = FloatingSpotifyWidget(self.central_widget)
+        self.media_float = FloatingMediaWidget(self.central_widget)
         self.weather_widget = WeatherWidget(self.central_widget)
         self.notif_panel = NotificationCard(self.central_widget)
         self.notif_panel.btn_close_notif.clicked.connect(self._toggle_notification_panel)
@@ -4997,6 +5176,11 @@ class MainWindow(QMainWindow):
 
         self.settings_overlay._on_close_callback = on_close
 
+        # Media Monitor (YouTube)
+        self.media_worker = MediaMonitorWorker(self)
+        self.media_worker.media_updated.connect(self.media_float.update_info)
+        self.media_worker.start()
+
         # Aplicar visibilidad inicial de widgets
         QTimer.singleShot(500, self._apply_widget_visibility)
 
@@ -5027,6 +5211,15 @@ class MainWindow(QMainWindow):
                 self.spotify_float.move((self.width() - 280) // 2 + 80, self.height() // 2 - 120)
                 self._spotify_positioned = True
 
+            # FloatingMediaWidget
+            wx = cfg.get("widget_pos_FloatingMediaWidget_x")
+            wy = cfg.get("widget_pos_FloatingMediaWidget_y")
+            if wx is not None and wy is not None:
+                self.media_float.move(int(wx), int(wy))
+            else:
+                self.media_float.move((self.width() - 280) // 2 + 80, self.height() // 2)
+
+
             # ── Widgets clásicos (posiciones relativas al HUD) ──
             # Se cargan en la ventana de configuración
 
@@ -5043,6 +5236,13 @@ class MainWindow(QMainWindow):
 
         # ── WIDGETS FLOTANTES ──
         # Spotify
+        
+        if cfg.get("show_widget_media", False):
+            if not self.media_float.isVisible():
+                self.animate_show_widget(self.media_float)
+        else:
+            self.media_float.hide()
+
         if cfg.get("show_widget_spotify", False):
             if not self.spotify_float.isVisible():
                 self.animate_show_widget(self.spotify_float)
@@ -5126,6 +5326,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_spotify_positioned"):
             self.spotify_float.move((W - 280) // 2 + 80, H // 2 - 120)
             self._spotify_positioned = True
+            
+            # FloatingMediaWidget
+            self.media_float.move((W - 280) // 2 + 80, H // 2)
+
 
         # Sticker
         if hasattr(self, "_sticker_path") and self._sticker_path and self.lbl_sticker.isVisible():
@@ -5436,6 +5640,10 @@ class MainWindow(QMainWindow):
             W = self.central_widget.width(); H = self.central_widget.height()
             self.spotify_float.move((W - 280) // 2 + 80, H // 2 - 120)
             self._spotify_positioned = True
+            
+            # FloatingMediaWidget
+            self.media_float.move((W - 280) // 2 + 80, H // 2)
+
         if self.spotify_float.isVisible(): self.animate_hide_widget(self.spotify_float)
         else: self.animate_show_widget(self.spotify_float)
 
@@ -6042,4 +6250,3 @@ class StudentModeWindow(QDialog):
             with open(fp, "w", encoding="utf-8") as f: f.write(self.quality_output.toHtml())
             QMessageBox.information(self, "OK", f"Guardado en:\n{d}"); os.startfile(d)
         except Exception as e: QMessageBox.critical(self, "Error", str(e))
-

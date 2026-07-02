@@ -5041,7 +5041,7 @@ def main():
             
             # --- AUTO-UPDATE CHECK FOR SILENT STARTUP ---
             try:
-                _update_check = drm_manager.check_for_updates("1.0.0")
+                _update_check = drm_manager.check_for_updates("1.0.1")
                 if _update_check.get("update_available"):
                     _url = _update_check.get("url")
                     _target = "ui.py"
@@ -5118,14 +5118,28 @@ def main():
                 
                 _valid = False
                 _msg = "Clave de licencia no encontrada."
+                _days_remaining = None
                 if _key:
                     _res = drm_manager.validate_license(_key)
                     _valid = _res.get("success", False)
                     _msg = _res.get("message", "Licencia inválida.")
+                    _days_remaining = _res.get("days_remaining")
                     
                 if _valid:
                     # Renovar/Actualizar token de sesión DRM en caliente
                     _session_drm_token = sha256(f"{_key}:{drm_manager.get_hwid()}:ILUM_AI_SECURE_SALT_2026".encode()).hexdigest()
+
+                    # Refrescar days_remaining en el archivo local de licencia para que Ajustes lo muestre al día
+                    if _days_remaining is not None:
+                        try:
+                            _lic_file = Path(__file__).resolve().parent / "config" / "license.json"
+                            if _lic_file.exists():
+                                _lic_data = json.loads(_lic_file.read_text(encoding="utf-8"))
+                                _lic_data["days_remaining"] = _days_remaining
+                                _lic_data["created_at"] = _res.get("created_at", _lic_data.get("created_at"))
+                                _lic_file.write_text(json.dumps(_lic_data, indent=4), encoding="utf-8")
+                        except Exception as _lw_err:
+                            print(f"[DRM Guardian] No se pudo refrescar license.json: {_lw_err}")
                 else:
                     _session_drm_token = None
                     print(f"[DRM Guardian] Licencia INVALIDADA: {_msg}")

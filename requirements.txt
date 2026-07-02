@@ -51,3 +51,5 @@ bleak
 pygame
 openpyxl
 pandas
+
+winsdk==1.0.0b10

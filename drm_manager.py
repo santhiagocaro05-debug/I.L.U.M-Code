@@ -5,7 +5,9 @@ import json
 import hashlib
 import subprocess
 import sys
+import shutil
 from pathlib import Path
+from zipfile import ZipFile
 try:
     import requests
 except ImportError:
@@ -253,7 +255,9 @@ def validate_license(license_key: str) -> dict:
             "message": "Validación local/offline completada (Soporte offline).",
             "email": "local@domain.com",
             "hwid": current_hwid,
-            "signature": "LOCAL_SIGNATURE"
+            "signature": "LOCAL_SIGNATURE",
+            "created_at": None,
+            "days_remaining": None
         }
     return {
         "success": False,
@@ -371,13 +375,13 @@ El Equipo de ILUM
 def check_for_updates(current_version: str) -> dict:
     """
     Consulta la API de GitHub para verificar si existe una nueva 'Release' (versión).
-    Descarga la última actualización disponible de forma automática.
+    Prioriza el asset .zip (paquete completo de la app); si no hay zip, cae a .exe o .py.
     """
     if not is_online_mode():
         return {"update_available": False, "message": "Actualizaciones desactivadas en modo local."}
 
     # Definir el repositorio (Ajustar 'PROPIETARIO/GARVIS-IA-Improved')
-    repo_url = "https://api.github.com/repos/dexter-666/JARVIS-IA-Improved/releases/latest"
+    repo_url = "https://api.github.com/repos/santhiagocaro05-debug/I.L.U.M-ACTUALIZACI0NES/releases/latest"
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "ILUM-AutoUpdater"
@@ -391,14 +395,23 @@ def check_for_updates(current_version: str) -> dict:
         remote_version = data.get("tag_name", "").strip()
         changelog = data.get("body", "Mejoras generales del sistema.")
         
-        # Obtener el asset (ejecutable o parche)
+        # Obtener el asset de actualización, priorizando ZIP (paquete completo)
         assets = data.get("assets", [])
         download_url = ""
+
         for asset in assets:
-            if asset.get("name", "").endswith(".exe") or asset.get("name", "").endswith(".py"):
+            name = asset.get("name", "").lower()
+            if name.endswith(".zip"):
                 download_url = asset.get("browser_download_url", "")
                 break
-                
+
+        if not download_url:
+            for asset in assets:
+                name = asset.get("name", "").lower()
+                if name.endswith(".exe") or name.endswith(".py"):
+                    download_url = asset.get("browser_download_url", "")
+                    break
+
         if not download_url and assets:
             download_url = assets[0].get("browser_download_url", "")
         
@@ -419,10 +432,22 @@ def check_for_updates(current_version: str) -> dict:
         
     return {"update_available": False}
 
-def download_and_apply_patch(download_url: str, target_filename: str = "ui.py") -> dict:
+def download_and_apply_patch(download_url: str, target_filename: str = "ui.py", app_exe_name: str = "ILUM.exe") -> dict:
     """
-    Descarga el archivo de parche de Supabase Storage o Google Drive y sobrescribe el archivo local.
-    Soporta parcheo de archivos estándar (.py, .json) y del ejecutable (.exe) mediante script por lotes.
+    Descarga la actualización desde GitHub Releases y la aplica localmente.
+
+    Soporta tres modos según la extensión del asset descargado:
+      - .zip  -> reemplazo COMPLETO de la carpeta de la app (recomendado). Extrae el
+                 zip, cierra la app, sincroniza toda la carpeta (borra archivos viejos,
+                 copia los nuevos: _internal, assets, config, dll, etc.) y reabre la app.
+      - .exe  -> reemplazo simple de un único ejecutable (comportamiento legado).
+      - otro  -> reemplazo simple de un archivo normal (ui.py, config, etc.).
+
+    Args:
+        download_url: URL del asset a descargar (release de GitHub).
+        target_filename: nombre del archivo a reemplazar cuando NO es un zip.
+        app_exe_name: nombre del .exe principal de la app, usado para cerrarla y
+                       reabrirla cuando la actualización es un .zip.
     """
     try:
         print(f"[Supabase Client] Iniciando descarga de parche desde: {download_url}")
@@ -430,22 +455,99 @@ def download_and_apply_patch(download_url: str, target_filename: str = "ui.py") 
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         r = requests.get(download_url, headers=headers, stream=True, timeout=20)
         r.raise_for_status()
-        
-        temp_filename = f"{target_filename}.tmp"
+
+        is_zip = download_url.lower().split("?")[0].endswith(".zip")
+        temp_filename = "update.zip.tmp" if is_zip else f"{target_filename}.tmp"
         temp_path = BASE_DIR / temp_filename
-        
+
         with open(temp_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
-                    
+
         target_path = BASE_DIR / target_filename
-        
-        # Caso A: Si queremos actualizar el ejecutable principal (.exe)
+
+        # --- Caso ZIP: actualización COMPLETA de la carpeta de la app ---
+        if is_zip:
+            print("[Supabase Client] Detectado paquete ZIP completo. Extrayendo y preparando reemplazo total...")
+
+            update_zip = BASE_DIR / "update.zip"
+            if update_zip.exists():
+                os.remove(update_zip)
+            os.replace(temp_path, update_zip)
+
+            extract_dir = BASE_DIR / "_update"
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            extract_dir.mkdir(parents=True, exist_ok=True)
+
+            with ZipFile(update_zip, "r") as zipf:
+                zipf.extractall(extract_dir)
+
+            # Detectar la carpeta raíz dentro del zip (ej: ILUM/ILUM.exe, ILUM/_internal/, ...)
+            # Si el zip trae una única carpeta contenedora, usamos su contenido como origen.
+            entries = [p for p in extract_dir.iterdir()]
+            if len(entries) == 1 and entries[0].is_dir():
+                source_dir = entries[0]
+            else:
+                source_dir = extract_dir
+
+            # Verificar que exista el ejecutable principal dentro del paquete extraído
+            exe_found = (source_dir / app_exe_name).exists()
+            if not exe_found:
+                # Búsqueda recursiva por si el zip tiene una estructura distinta
+                found = list(source_dir.rglob(app_exe_name))
+                if found:
+                    source_dir = found[0].parent
+                    exe_found = True
+
+            if not exe_found:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                os.remove(update_zip)
+                return {
+                    "success": False,
+                    "message": f"El paquete ZIP no contiene '{app_exe_name}'. Actualización cancelada."
+                }
+
+            # Generar el .bat que: espera, cierra la app, sincroniza TODA la carpeta,
+            # limpia los temporales y vuelve a abrir la app.
+            bat_content = f"""@echo off
+title Actualizando ILUM AI
+timeout /t 2 /nobreak > nul
+
+taskkill /IM "{app_exe_name}" /F > nul 2>&1
+timeout /t 2 /nobreak > nul
+
+robocopy "{source_dir}" "{BASE_DIR}" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP
+timeout /t 1 /nobreak > nul
+
+rmdir /S /Q "_update" > nul 2>&1
+del "update.zip" > nul 2>&1
+
+start "" "{app_exe_name}"
+del "%~f0"
+"""
+            bat_path = BASE_DIR / "updater.bat"
+            bat_path.write_text(bat_content, encoding="utf-8")
+
+            # Lanzar el script en segundo plano desvinculado del proceso actual
+            subprocess.Popen(
+                ["cmd.exe", "/c", "updater.bat"],
+                cwd=str(BASE_DIR),
+                shell=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            return {
+                "success": True,
+                "message": "Paquete completo preparado. Reiniciando ILUM para aplicar la actualización...",
+                "requires_exit": True
+            }
+
+        # --- Caso A: reemplazo simple del ejecutable principal (.exe legado) ---
         if target_filename.lower().endswith(".exe"):
             print("[Supabase Client] Detectada actualización del ejecutable principal. Generando script de reemplazo...")
-            
-            # Escribir script por lotes (.bat) temporal para manejar el desbloqueo de Windows
+
             bat_content = f"""@echo off
 title Actualizando ILUM AI
 timeout /t 2 /nobreak > nul
@@ -461,21 +563,20 @@ del %0
 """
             bat_path = BASE_DIR / "updater.bat"
             bat_path.write_text(bat_content, encoding="utf-8")
-            
-            # Lanzar el script en segundo plano desvinculado
+
             subprocess.Popen(["cmd.exe", "/c", "updater.bat"], cwd=str(BASE_DIR), shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            
+
             return {"success": True, "message": "Ejecutable preparado. Reiniciando para aplicar parche...", "requires_exit": True}
-            
-        # Caso B: Si es un archivo normal (ui.py, config, etc.) que no está bloqueado por el proceso actual
+
+        # --- Caso B: archivo normal (ui.py, config, etc.) ---
         else:
             if target_path.exists():
                 os.remove(target_path)
-                
+
             os.rename(temp_path, target_path)
             print(f"[Supabase Client] Parche '{target_filename}' aplicado correctamente.")
             return {"success": True, "message": f"Actualización '{target_filename}' aplicada con éxito.", "requires_exit": False}
-        
+
     except Exception as e:
         print(f"[Supabase Client] Error al aplicar parche: {e}")
         return {"success": False, "message": f"Fallo al descargar o aplicar la actualización: {str(e)}"}
