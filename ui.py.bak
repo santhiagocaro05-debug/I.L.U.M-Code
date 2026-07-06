@@ -5267,7 +5267,7 @@ class MainWindow(QMainWindow):
 
     def _open_folder(self):
         try:
-            ruta_descargas = os.path.join(os.path.expanduser("~"), "Downloads", "Ilum_Downloads")
+            ruta_descargas = os.path.join(os.path.expanduser("~"), "Downloads", "Nexus_Downloads")
             os.makedirs(ruta_descargas, exist_ok=True)
             os.startfile(ruta_descargas)
         except Exception:

@@ -17,14 +17,19 @@ Settings Dialog includes ALL tabs:
   SPOTIFY, WIDGETS E IDENTIDAD, MACROS
 """
 from __future__ import annotations
+
+# ─── SISTEMA Y UTILIDADES ────────────────────────────────────────────────
 import sys
 import os
 import json
-import psutil
+import threading
 import urllib
+import ctypes
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from PyQt6.QtCore import pyqtProperty
 
+# ─── PYQT6 WIDGETS ──────────────────────────────────────────────────────
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QLineEdit, QTextEdit,
@@ -33,35 +38,160 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSlider, QFrame, QTabWidget, QColorDialog,
     QStackedWidget, QTextBrowser, QSizePolicy
 )
+
+# ─── PYQT6 CORE ─────────────────────────────────────────────────────────
 from PyQt6.QtCore import (
     Qt, QUrl, pyqtSignal, pyqtSlot, QObject, QTimer,
     QSize, QThread, QRect, QRectF, QEvent, QPropertyAnimation,
-    QEasingCurve, QPoint
+    QEasingCurve, QPoint, QMetaObject, Q_ARG
 )
+
+# ─── PYQT6 GUI ──────────────────────────────────────────────────────────
 from PyQt6.QtGui import (
     QFont, QColor, QIcon, QMouseEvent, QPainterPath,
-    QRegion, QResizeEvent, QPainter, QPen
+    QRegion, QResizeEvent, QPainter, QPen, QPixmap,
+    QLinearGradient
 )
+
+# ─── PYQT6 WEB ENGINE ──────────────────────────────────────────────────
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
+# ─── EXTERNAS ───────────────────────────────────────────────────────────
+import psutil
+from pyparsing import Dict
+
+# ─── MÓDULOS PROPIOS ────────────────────────────────────────────────────
 from shop import ShopWidget
 from core.media_monitor import MediaMonitorWorker
 
+# ─── QTAWESOME (ICONOS) ─────────────────────────────────────────────────
 try:
     import qtawesome as qta
     HAS_QTA = True
 except ImportError:
     HAS_QTA = False
 
-_BA_TZ = timezone(timedelta(hours=-5))
-
-
 def get_bundled_path(*paths):
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS).joinpath(*paths)
     return Path(__file__).resolve().parent.joinpath(*paths)
 
+# ─── SISTEMA DE SONIDOS ──────────────────────────────────────────────────
+
+class SoundManager:
+    """Sistema de sonidos estilo macOS para NEXUS."""
+    
+    SOUND_FILES = {
+        "click": "click.mp3",
+        "hover": "hover.mp3",
+        "open": "open_panel.mp3",
+        "close": "close_panel.mp3",
+        "listen": "listen_start.mp3",
+        "respond": "response.mp3",
+        "mute": "mute.mp3",
+        "error": "error.mp3",
+        "success": "success.mp3",
+        "notification": "notification.mp3",
+        "typing": "typing.mp3",
+    }
+    
+    def __init__(self):
+        self._enabled = True
+        self._volume = 0.6
+        self._sounds = {}
+        self._pygame_available = False
+        self._event_enabled = {}  # 🆕 Estado individual por evento
+        
+        try:
+            import pygame
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            self._pygame_available = True
+        except ImportError:
+            print("[SoundManager] Pygame no instalado. Usando winsound.")
+        except Exception as e:
+            print(f"[SoundManager] Error inicializando pygame: {e}")
+        
+        self._load_sounds()
+    
+    def _load_sounds(self):
+        if not self._pygame_available:
+            return
+            
+        import pygame
+        
+        sound_dir = get_bundled_path("assets", "sounds")
+        if not sound_dir.exists():
+            print(f"[SoundManager] Carpeta de sonidos no encontrada: {sound_dir}")
+            return
+        
+        for event_name, filename in self.SOUND_FILES.items():
+            file_path = sound_dir / filename
+            if file_path.exists():
+                try:
+                    sound = pygame.mixer.Sound(str(file_path))
+                    sound.set_volume(self._volume)
+                    self._sounds[event_name] = sound
+                except Exception as e:
+                    print(f"[SoundManager] Error cargando {filename}: {e}")
+            else:
+                print(f"[SoundManager] Sonido no encontrado: {file_path}")
+        
+        print(f"[SoundManager] {len(self._sounds)} sonidos cargados.")
+    
+    def play(self, event_name: str):
+        """Reproduce un sonido si está habilitado globalmente Y individualmente."""
+        if not self._enabled:
+            return
+        # 🆕 Verificar estado individual
+        if not self._event_enabled.get(event_name, True):
+            return
+            
+        if event_name in self._sounds:
+            try:
+                self._sounds[event_name].play()
+            except Exception as e:
+                print(f"[SoundManager] Error reproduciendo {event_name}: {e}")
+        else:
+            try:
+                import winsound
+                winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS)
+            except:
+                pass
+    
+    def set_volume(self, volume: float):
+        self._volume = max(0.0, min(1.0, volume))
+        for sound in self._sounds.values():
+            sound.set_volume(self._volume)
+    
+    def set_enabled(self, enabled: bool):
+        self._enabled = enabled
+    
+    def is_enabled(self) -> bool:
+        return self._enabled
+    
+    # 🆕 Métodos para control individual
+    def set_event_enabled(self, event_name: str, enabled: bool):
+        """Activa o desactiva un sonido específico."""
+        self._event_enabled[event_name] = enabled
+    
+    def is_event_enabled(self, event_name: str) -> bool:
+        """Devuelve si un sonido específico está activado."""
+        return self._event_enabled.get(event_name, True)
+    
+# ─── INSTANCIA GLOBAL DE SONIDOS ──────────────────────────────────────
+_sound_manager = None
+
+def get_sound_manager() -> SoundManager:
+    """Obtiene la instancia global del SoundManager."""
+    global _sound_manager
+    if _sound_manager is None:
+        _sound_manager = SoundManager()
+    return _sound_manager
+
+def play_sound(event_name: str):
+    """Función de acceso rápido para reproducir sonidos."""
+    get_sound_manager().play(event_name)
 
 # ── Theme palette ──────────────────────────────────────────────────────────
 THEMES = {
@@ -323,71 +453,281 @@ class CameraPreviewWindow(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════
 #  HUD Overlay Elements
 # ═══════════════════════════════════════════════════════════════════════════
-
 class ClockWidget(QWidget):
+    THEMES = [
+        {
+            "name": "Clásico",
+            "time_font": FONT_FAMILY,
+            "time_color": "white",
+            "time_weight": 700,
+            "sec_color": "rgba(255,255,255,0.60)",
+            "ampm_color": "rgba(255,255,255,0.75)",
+            "date_font": FONT_FAMILY,
+            "date_color": "rgba(255,255,255,0.85)",
+            "date_italic": False,
+            "date_upper": False,
+            "panel_bg": "transparent",
+            "panel_radius": 0,
+        },
+        {
+            "name": "Neón",
+            "time_font": FONT_FAMILY,
+            "time_color": "#28e6ff",
+            "time_weight": 800,
+            "sec_color": "rgba(40,230,255,0.55)",
+            "ampm_color": "#ff3fd8",
+            "date_font": FONT_FAMILY,
+            "date_color": "#ff3fd8",
+            "date_italic": False,
+            "date_upper": True,
+            "panel_bg": "rgba(20, 10, 35, 0.35)",
+            "panel_radius": 14,
+        },
+        {
+            "name": "Oro Elegante",
+            "time_font": "Georgia",
+            "time_color": "#e8c27a",
+            "time_weight": 500,
+            "sec_color": "rgba(232,194,122,0.55)",
+            "ampm_color": "rgba(232,194,122,0.85)",
+            "date_font": "Georgia",
+            "date_color": "rgba(255,255,255,0.75)",
+            "date_italic": True,
+            "date_upper": False,
+            "panel_bg": "transparent",
+            "panel_radius": 0,
+        },
+        {
+            "name": "Retro Digital",
+            "time_font": "Courier New",
+            "time_color": "#39ff6a",
+            "time_weight": 700,
+            "sec_color": "rgba(57,255,106,0.55)",
+            "ampm_color": "rgba(57,255,106,0.85)",
+            "date_font": "Courier New",
+            "date_color": "rgba(57,255,106,0.70)",
+            "date_italic": False,
+            "date_upper": True,
+            "panel_bg": "rgba(0, 20, 5, 0.45)",
+            "panel_radius": 8,
+        },
+        {
+            "name": "Minimal Mono",
+            "time_font": "Consolas",
+            "time_color": "rgba(255,255,255,0.92)",
+            "time_weight": 400,
+            "sec_color": "rgba(255,255,255,0.45)",
+            "ampm_color": "rgba(255,255,255,0.55)",
+            "date_font": "Consolas",
+            "date_color": "rgba(255,255,255,0.55)",
+            "date_italic": False,
+            "date_upper": True,
+            "panel_bg": "transparent",
+            "panel_radius": 0,
+        },
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.setObjectName("ClockWidget")
+
+        self._theme_index = 0
+
+        # Layout principal (misma altura que antes: sin fila extra)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
         layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.lbl_time = QLabel("12:00:00 AM")
-        font_t = QFont(FONT_FAMILY, 28, QFont.Weight.Bold)
-        font_t.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
-        self.lbl_time.setFont(font_t)
-        self.lbl_time.setStyleSheet("color: white; border: none; background: transparent;")
-        layout.addWidget(self.lbl_time)
+
+        # ─── FILA DE LA HORA + botón pegadito arriba-derecha ─────────
+        time_row = QHBoxLayout()
+        time_row.setContentsMargins(0, 0, 0, 0)
+        time_row.setSpacing(4)
+
+        self.lbl_time = QLabel()
+        self.lbl_time.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_time.setTextFormat(Qt.TextFormat.RichText)
+
+        self.btn_theme = QPushButton("+")
+        self.btn_theme.setFixedSize(18, 18)
+        self.btn_theme.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_theme.setToolTip("Cambiar diseño del reloj")
+        self.btn_theme.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.14);
+                border: none;
+                border-radius: 9px;
+                color: white;
+                font-size: 13px;
+                font-weight: 700;
+                padding: 0px;
+            }
+            QPushButton:hover { background: rgba(255, 255, 255, 0.26); }
+            QPushButton:pressed { background: rgba(255, 255, 255, 0.34); }
+        """)
+        self.btn_theme.clicked.connect(self.next_theme)
+
+        # La hora ocupa el espacio disponible; el botón queda arriba-derecha, sin agregar altura
+        time_row.addWidget(self.lbl_time, 1)
+        time_row.addWidget(self.btn_theme, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(time_row)
+
+        # ─── FECHA ────────────────────────────────────────────────────
         self.lbl_date = QLabel("Monday, 09 June 2026")
-        font_d = QFont(FONT_FAMILY, 11)
-        self.lbl_date.setFont(font_d)
-        self.lbl_date.setStyleSheet("color: rgba(255,255,255,0.95); border: none; background: transparent; letter-spacing: 0.5px;")
         layout.addWidget(self.lbl_date)
+
+        # ⏱️ Timer para actualizar cada segundo
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(1000)
+
+        self.apply_theme()
         self.tick()
+
+    def next_theme(self):
+        """Avanza al siguiente diseño del reloj (cíclico)."""
+        self._theme_index = (self._theme_index + 1) % len(self.THEMES)
+        self.apply_theme()
+        self.tick()
+
+    def apply_theme(self):
+        theme = self.THEMES[self._theme_index]
+
+        self.setStyleSheet(f"""
+            QWidget#ClockWidget {{
+                background: {theme['panel_bg']};
+                border-radius: {theme['panel_radius']}px;
+            }}
+        """)
+
+        self.lbl_date.setFont(QFont(theme['date_font'], 11, italic=theme['date_italic']))
+        self.lbl_date.setStyleSheet(f"""
+            color: {theme['date_color']};
+            border: none;
+            background: transparent;
+            letter-spacing: 0.5px;
+        """)
+
+        self.btn_theme.setToolTip(f"Diseño actual: {theme['name']} — clic para cambiar")
 
     def tick(self):
         now = datetime.now()
-        self.lbl_time.setText(now.strftime("%I:%M:%S %p"))
-        self.lbl_date.setText(now.strftime("%A, %d %B %Y"))
+        theme = self.THEMES[self._theme_index]
+
+        horas = now.strftime("%I").lstrip("0") or "12"
+        minutos = now.strftime("%M")
+        segundos = now.strftime("%S")
+        ampm = now.strftime("%p")
+
+        html = f"""
+        <span style="font-size: 34px; font-weight: {theme['time_weight']}; font-family: '{theme['time_font']}'; color: {theme['time_color']};">
+            {horas}:{minutos}
+        </span>
+        <span style="font-size: 16px; font-weight: 600; font-family: '{theme['time_font']}'; color: {theme['sec_color']};">
+            :{segundos}
+        </span>
+        <span style="font-size: 18px; font-weight: 600; font-family: '{theme['time_font']}'; color: {theme['ampm_color']}; margin-left: 6px;">
+            {ampm}
+        </span>
+        """
+        self.lbl_time.setText(html)
+
+        fecha_txt = now.strftime("%A, %d %B %Y")
+        if theme['date_upper']:
+            fecha_txt = fecha_txt.upper()
+        self.lbl_date.setText(fecha_txt)
 
     def update_style(self):
-        self.setStyleSheet("QWidget#ClockWidget { background: transparent; border: none; }")
-
+        self.apply_theme()
 
 class SystemMonitorWidget(QWidget):
+    THEMES = [
+        {
+            "name": "Blanco",
+            "text_color": "rgba(255,255,255,0.95)",
+            "icon_color": "#ffffff",
+            "panel_bg": "transparent",
+            "panel_radius": 0,
+            "btn_bg": "rgba(255,255,255,0.16)",
+            "btn_fg": "#ffffff",
+        },
+        {
+            "name": "Negro",
+            "text_color": "rgba(20,20,20,0.90)",
+            "icon_color": "#141414",
+            "panel_bg": "rgba(255,255,255,0.55)",
+            "panel_radius": 10,
+            "btn_bg": "rgba(0,0,0,0.14)",
+            "btn_fg": "#141414",
+        },
+        {
+            "name": "Pastel Lavanda",
+            "text_color": "#dccdff",
+            "icon_color": "#dccdff",
+            "panel_bg": "rgba(90, 70, 120, 0.25)",
+            "panel_radius": 10,
+            "btn_bg": "rgba(220,205,255,0.22)",
+            "btn_fg": "#dccdff",
+        },
+        {
+            "name": "Pastel Menta",
+            "text_color": "#c3f2df",
+            "icon_color": "#c3f2df",
+            "panel_bg": "rgba(50, 100, 85, 0.22)",
+            "panel_radius": 10,
+            "btn_bg": "rgba(195,242,223,0.22)",
+            "btn_fg": "#c3f2df",
+        },
+        {
+            "name": "Pastel Durazno",
+            "text_color": "#ffd9c2",
+            "icon_color": "#ffd9c2",
+            "panel_bg": "rgba(120, 80, 60, 0.22)",
+            "panel_radius": 10,
+            "btn_bg": "rgba(255,217,194,0.22)",
+            "btn_fg": "#ffd9c2",
+        },
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # Antes era 100% click-through; lo desactivamos para que el botón "+" reciba el clic
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.setObjectName("SysMonitor")
+
+        self._theme_index = 0
+        self._icon_names = {
+            "ram": "fa5s.microchip",
+            "cpu": "fa5s.tachometer-alt",
+            "disk": "fa5s.hdd",
+        }
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
 
-        neon_white = "rgba(255,255,255,0.95)"
-
-        # ───── RAM ─────
+        # ───── RAM (+ botón de tema en la misma fila, sin sumar altura) ─────
         self.row_ram = QHBoxLayout()
         self.row_ram.setSpacing(6)
         self.row_ram.setAlignment(Qt.AlignmentFlag.AlignRight)
 
+        self.btn_theme = QPushButton("+")
+        self.btn_theme.setFixedSize(16, 16)
+        self.btn_theme.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_theme.setToolTip("Cambiar diseño del monitor")
+        self.btn_theme.clicked.connect(self.next_theme)
+
         self.lbl_ram_val = QLabel("RAM 0%")
-        self.lbl_ram_val.setStyleSheet(f"color: {neon_white}; font-size: 11px; font-weight: 700; background:transparent; border:none; letter-spacing:0.5px;")
         self.lbl_ram_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.row_ram.addWidget(self.btn_theme, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.row_ram.addWidget(self.lbl_ram_val)
 
         if HAS_QTA:
             self.icon_ram = QLabel()
-            self.icon_ram.setPixmap(qta.icon('fa5s.microchip', color='#ffffff').pixmap(13, 13))
-            self.row_ram.addWidget(self.lbl_ram_val)
             self.row_ram.addWidget(self.icon_ram)
-        else:
-            self.row_ram.addWidget(self.lbl_ram_val)
-
         layout.addLayout(self.row_ram)
 
         # ───── CPU ─────
@@ -396,17 +736,12 @@ class SystemMonitorWidget(QWidget):
         self.row_cpu.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.lbl_cpu_val = QLabel("CPU 0%")
-        self.lbl_cpu_val.setStyleSheet(f"color: {neon_white}; font-size: 11px; font-weight: 700; background:transparent; border:none; letter-spacing:0.5px;")
         self.lbl_cpu_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.row_cpu.addWidget(self.lbl_cpu_val)
 
         if HAS_QTA:
             self.icon_cpu = QLabel()
-            self.icon_cpu.setPixmap(qta.icon('fa5s.tachometer-alt', color='#ffffff').pixmap(13, 13))
-            self.row_cpu.addWidget(self.lbl_cpu_val)
             self.row_cpu.addWidget(self.icon_cpu)
-        else:
-            self.row_cpu.addWidget(self.lbl_cpu_val)
-
         layout.addLayout(self.row_cpu)
 
         # ───── DISK ─────
@@ -415,44 +750,68 @@ class SystemMonitorWidget(QWidget):
         self.row_disk.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.lbl_disk_val = QLabel("DSK 0%")
-        self.lbl_disk_val.setStyleSheet(f"color: {neon_white}; font-size: 11px; font-weight: 700; background:transparent; border:none; letter-spacing:0.5px;")
         self.lbl_disk_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.row_disk.addWidget(self.lbl_disk_val)
 
         if HAS_QTA:
             self.icon_disk = QLabel()
-            self.icon_disk.setPixmap(qta.icon('fa5s.hdd', color='#ffffff').pixmap(13, 13))
-            self.row_disk.addWidget(self.lbl_disk_val)
             self.row_disk.addWidget(self.icon_disk)
-        else:
-            self.row_disk.addWidget(self.lbl_disk_val)
-
         layout.addLayout(self.row_disk)
-
-        # ───── TEMPERATURA ─────
-        self.row_tem = QHBoxLayout()
-        self.row_tem.setSpacing(6)
-        self.row_tem.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self.lbl_tem_val = QLabel("TEM --°C")
-        self.lbl_tem_val.setStyleSheet(f"color: {neon_white}; font-size: 11px; font-weight: 700; background:transparent; border:none; letter-spacing:0.5px;")
-        self.lbl_tem_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        if HAS_QTA:
-            self.icon_tem = QLabel()
-            self.icon_tem.setPixmap(qta.icon('fa5s.thermometer-half', color='#ffffff').pixmap(13, 13))
-            self.row_tem.addWidget(self.lbl_tem_val)
-            self.row_tem.addWidget(self.icon_tem)
-        else:
-            self.row_tem.addWidget(self.lbl_tem_val)
-
-        layout.addLayout(self.row_tem)
 
         # ⏱️ TIMER
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_stats)
         self.timer.start(2000)
 
+        self.apply_theme()
         self.update_stats()
+
+    def next_theme(self):
+        """Avanza al siguiente diseño del monitor (cíclico)."""
+        self._theme_index = (self._theme_index + 1) % len(self.THEMES)
+        self.apply_theme()
+
+    def apply_theme(self):
+        theme = self.THEMES[self._theme_index]
+
+        self.setStyleSheet(f"""
+            QWidget#SysMonitor {{
+                background: {theme['panel_bg']};
+                border-radius: {theme['panel_radius']}px;
+            }}
+        """)
+
+        text_style = f"""
+            color: {theme['text_color']};
+            font-size: 11px;
+            font-weight: 700;
+            background: transparent;
+            border: none;
+            letter-spacing: 0.5px;
+        """
+        self.lbl_ram_val.setStyleSheet(text_style)
+        self.lbl_cpu_val.setStyleSheet(text_style)
+        self.lbl_disk_val.setStyleSheet(text_style)
+
+        if HAS_QTA:
+            self.icon_ram.setPixmap(qta.icon(self._icon_names["ram"], color=theme['icon_color']).pixmap(13, 13))
+            self.icon_cpu.setPixmap(qta.icon(self._icon_names["cpu"], color=theme['icon_color']).pixmap(13, 13))
+            self.icon_disk.setPixmap(qta.icon(self._icon_names["disk"], color=theme['icon_color']).pixmap(13, 13))
+
+        self.btn_theme.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme['btn_bg']};
+                border: none;
+                border-radius: 8px;
+                color: {theme['btn_fg']};
+                font-size: 11px;
+                font-weight: 700;
+                padding: 0px;
+            }}
+            QPushButton:hover {{ background: rgba(255,255,255,0.10); }}
+            QPushButton:pressed {{ background: rgba(255,255,255,0.18); }}
+        """)
+        self.btn_theme.setToolTip(f"Diseño actual: {theme['name']} — clic para cambiar")
 
     def update_stats(self):
         try:
@@ -466,18 +825,6 @@ class SystemMonitorWidget(QWidget):
         except Exception:
             pass
 
-        try:
-            temps = psutil.sensors_temperatures()
-            if temps:
-                for k in ("coretemp", "cpu_thermal", "acpitz"):
-                    if k in temps and temps[k]:
-                        self.lbl_tem_val.setText(f"TEM {int(temps[k][0].current)}°C")
-                        return
-            self.lbl_tem_val.setText("TEM --°C")
-        except Exception:
-            self.lbl_tem_val.setText("TEM --°C")
-
-
 class HUDIconButton(QPushButton):
     def __init__(self, icon_name: str, size: int = 36, icon_size: int = 14,
                  color: str = "#d8dbe2", parent=None, liquid_glass: bool = False):
@@ -489,7 +836,9 @@ class HUDIconButton(QPushButton):
         self._color = color
         self._icon_size = icon_size
         self._active = False
-        self._liquid_glass = liquid_glass  # 🆕 Nuevo parámetro
+        self._liquid_glass = liquid_glass
+        self._y_offset = 0.0  # 🔑 NUEVO: maneja el rebote sin mover el widget
+        self._hover_played = False
 
         if HAS_QTA:
             self.setIcon(qta.icon(icon_name, color=color))
@@ -505,12 +854,34 @@ class HUDIconButton(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_style()
 
+        # 🔑 UNA SOLA ANIMACIÓN (no dos peleando)
+        self._bounce_anim = QPropertyAnimation(self, b"yOffset")
+        self._bounce_anim.setDuration(150)
+        self._bounce_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    # ─── PROPIEDAD PARA ANIMACIÓN ─────────────────────────────────────
+    def _get_y_offset(self) -> float:
+        return self._y_offset
+
+    def _set_y_offset(self, v: float):
+        self._y_offset = v
+        self.update()  # 🔑 fuerza repintado, NO mueve el widget
+
+    yOffset = pyqtProperty(float, _get_y_offset, _set_y_offset)
+
+    # ─── ANIMACIÓN ÚNICA ──────────────────────────────────────────────
+    def _animate_offset_to(self, target: float, duration: int = 150):
+        self._bounce_anim.stop()  # 🔑 corta la animación anterior
+        self._bounce_anim.setDuration(duration)
+        self._bounce_anim.setStartValue(self._y_offset)
+        self._bounce_anim.setEndValue(target)
+        self._bounce_anim.start()
+
     def update_style(self):
         from ui import C_PRI
         c_pri_color = QColor(C_PRI)
         r, g, b = c_pri_color.red(), c_pri_color.green(), c_pri_color.blue()
 
-        # 🆕 Si es Liquid Glass, aplicar estilo especial
         if self._liquid_glass:
             self.setStyleSheet("""
                 QPushButton {
@@ -526,23 +897,23 @@ class HUDIconButton(QPushButton):
                 QPushButton:hover {
                     background: qlineargradient(
                         x1:0, y1:0, x2:1, y2:1,
-                        stop:0 rgba(255, 255, 255, 0.18),
-                        stop:0.5 rgba(255, 255, 255, 0.10),
-                        stop:1 rgba(255, 255, 255, 0.05)
-                    );
-                    border: 1px solid rgba(255, 255, 255, 0.25);
-                }
-                QPushButton:pressed {
-                    background: qlineargradient(
-                        x1:0, y1:0, x2:1, y2:1,
                         stop:0 rgba(255, 255, 255, 0.25),
                         stop:0.5 rgba(255, 255, 255, 0.15),
                         stop:1 rgba(255, 255, 255, 0.08)
                     );
+                    border: 1px solid rgba(255, 255, 255, 0.35);
+                }
+                QPushButton:pressed {
+                    background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:1,
+                        stop:0 rgba(255, 255, 255, 0.35),
+                        stop:0.5 rgba(255, 255, 255, 0.25),
+                        stop:1 rgba(255, 255, 255, 0.15)
+                    );
+                    border: 1px solid rgba(255, 255, 255, 0.50);
                 }
             """)
             
-            # Sombra glass más suave
             self.glow.setBlurRadius(18)
             self.glow.setColor(QColor(0, 0, 0, 40))
             self.glow.setOffset(0, 2)
@@ -553,12 +924,10 @@ class HUDIconButton(QPushButton):
                     border: none;
                 }
             """)
-            # Sombra normal
             self.glow.setBlurRadius(18)
             self.glow.setColor(QColor(self._color))
             self.glow.setOffset(0, 0)
 
-        # Set the icon color based on active status
         if HAS_QTA:
             if self._active:
                 c = QColor(r, g, b, 160)
@@ -576,26 +945,37 @@ class HUDIconButton(QPushButton):
         self.update_style()
 
     def set_liquid_glass(self, enabled: bool):
-        """Activa o desactiva el estilo Liquid Glass."""
         self._liquid_glass = enabled
         self.update_style()
 
+    # ─── EVENTOS CON ANIMACIÓN DE OFFSET ──────────────────────────────
+
     def enterEvent(self, event):
+        """Animación al pasar el mouse: sube 2px y cambia brillo."""
+        if not self._hover_played:
+            self._hover_played = True
+            play_sound("hover")
+        
         if HAS_QTA:
             if self._liquid_glass:
-                # En hover, el estilo Liquid Glass ya maneja el efecto
                 self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
                 self.glow.setColor(QColor(255, 255, 255, 30))
             else:
                 self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
                 self.glow.setColor(QColor("#ffffff"))
             self.update()
+        
+        # 🔑 sube 2px (el widget NO se mueve, solo se dibuja arriba)
+        self._animate_offset_to(-2)
+        
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        """Animación al salir el mouse: vuelve a la posición original."""
+        self._hover_played = False
+        
         if HAS_QTA:
             if self._liquid_glass:
-                # Volver al estado Liquid Glass
                 color = "#f59e0b" if self._active else "#d8dbe2"
                 self.setIcon(qta.icon(self._icon_name, color=color))
                 self.glow.setColor(QColor(0, 0, 0, 40))
@@ -612,13 +992,19 @@ class HUDIconButton(QPushButton):
                     self.setIcon(qta.icon(self._icon_name, color=c))
                     self.glow.setColor(c)
             self.update()
+        
+        # 🔑 vuelve a 0 (posición original)
+        self._animate_offset_to(0)
+        
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
+        """Animación al presionar: baja 1px."""
         if event.button() == Qt.MouseButton.LeftButton:
+            play_sound("click")
+            
             if HAS_QTA:
                 if self._liquid_glass:
-                    # Presionado: más opaco
                     self.setIcon(qta.icon(self._icon_name, color=QColor(255, 255, 255, 100)))
                     self.glow.setColor(QColor(255, 255, 255, 20))
                 else:
@@ -629,13 +1015,17 @@ class HUDIconButton(QPushButton):
                     self.setIcon(qta.icon(self._icon_name, color=c))
                     self.glow.setColor(c)
                 self.update()
+            
+            # 🔑 baja 1px desde donde esté (sin importar si está en hover o no)
+            self._animate_offset_to(self._y_offset + 1, duration=80)
+            
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """Animación al soltar: vuelve a la posición de hover o normal."""
         if event.button() == Qt.MouseButton.LeftButton:
             if HAS_QTA:
                 if self.underMouse():
-                    # Release inside: hover
                     if self._liquid_glass:
                         self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
                         self.glow.setColor(QColor(255, 255, 255, 30))
@@ -643,7 +1033,6 @@ class HUDIconButton(QPushButton):
                         self.setIcon(qta.icon(self._icon_name, color=QColor("#ffffff")))
                         self.glow.setColor(QColor("#ffffff"))
                 else:
-                    # Release outside
                     if self._liquid_glass:
                         color = "#f59e0b" if self._active else "#d8dbe2"
                         self.setIcon(qta.icon(self._icon_name, color=color))
@@ -661,12 +1050,23 @@ class HUDIconButton(QPushButton):
                             self.setIcon(qta.icon(self._icon_name, color=c))
                             self.glow.setColor(c)
                 self.update()
+            
+            # 🔑 si el mouse está encima → hover (-2), si no → posición normal (0)
+            target = -2 if self.underMouse() else 0
+            self._animate_offset_to(target)
+            
         super().mouseReleaseEvent(event)
+
+    # ─── PAINT EVENT (el secreto del rebote sin mover el widget) ──────
 
     def paintEvent(self, event):
         from PyQt6.QtWidgets import QStyleOptionButton, QStyle
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # 🔑 AQUÍ ESTÁ EL TRUCO: se dibuja desplazado, pero el widget NO se mueve
+        # El layout nunca se entera de este movimiento
+        painter.translate(0, self._y_offset)
 
         opt = QStyleOptionButton()
         self.initStyleOption(opt)
@@ -746,15 +1146,16 @@ class BottomLeftDock(QWidget):
 
         icon_color = "#d8dbe2"
 
-        # 🔔 CAMPANA CON LIQUID GLASS ✅
+        # ✨ ACCESOS DIRECTOS CON LIQUID GLASS ✅
         self.btn_bell = HUDIconButton(
-            'fa5s.bell',
+            'fa5s.th',
             36,
             14,
-            icon_color,
+            '#ffffff',
             self,
-            liquid_glass=True  # 🆕 Activado
+            liquid_glass=True
         )
+        self.btn_bell.setToolTip("Accesos Directos")
 
         # 📁 CARPETA NORMAL (sin Liquid Glass)
         self.btn_folder = HUDIconButton(
@@ -788,11 +1189,11 @@ class BottomLeftDock(QWidget):
         """)
 
     def set_notification(self, has_notif: bool):
-        """Cambia el color de la campana cuando hay notificaciones"""
+        """Cambia el color cuando hay notificaciones (obsoleto para accesos, pero mantenemos compatibilidad)"""
         color = "#f59e0b" if has_notif else "#d8dbe2"
         
         if HAS_QTA:
-            self.btn_bell.setIcon(qta.icon('fa5s.bell', color=color))
+            self.btn_bell.setIcon(qta.icon('fa5s.th', color=color))
             
         if has_notif:
             self.btn_bell._active = True
@@ -925,29 +1326,36 @@ class ProBadge(QLabel):
 
 
 class NotificationCard(QWidget):
+    """Panel de notificaciones premium estilo macOS/Windows 11 con Liquid Glass."""
+ 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("NotifCard")
-        self.setFixedWidth(340)
+        self.setFixedWidth(380)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._max_notifications = 5
+        self._max_notifications = 10
         self._notification_count = 0
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._auto_hide)
-        self._animations = []  # Guardar referencias de animaciones
-
-        # 🔥 GLASS CLEAN PRO
+        self._animations = []
+        self._notifications_data = []
+        self._initialized = False
+        self._has_date_header = False  # 🆕 controla el encabezado "HOY"
+ 
         self.setStyleSheet("""
         QWidget#NotifCard {
-            background: rgba(12,12,16,0.85);
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 20px;
+            background: rgba(8, 8, 12, 0.88);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 24px;
+        }
+        QWidget#NotifCard:hover {
+            border-color: rgba(255, 255, 255, 0.08);
         }
         QLabel {
             background: transparent;
             border: none;
-            color: rgba(245,245,250,0.96);
+            color: rgba(245, 245, 250, 0.96);
         }
         QScrollArea {
             background: transparent;
@@ -955,323 +1363,743 @@ class NotificationCard(QWidget):
         }
         QScrollBar:vertical {
             border: none;
-            background: rgba(255,255,255,0.04);
-            width: 5px;
-            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.02);
+            width: 4px;
+            border-radius: 2px;
             margin: 4px 2px;
         }
         QScrollBar::handle:vertical {
-            background: rgba(255,255,255,0.15);
+            background: rgba(255, 255, 255, 0.08);
             min-height: 30px;
-            border-radius: 3px;
+            border-radius: 2px;
         }
         QScrollBar::handle:vertical:hover {
-            background: rgba(255,255,255,0.25);
+            background: rgba(255, 255, 255, 0.15);
         }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
             height: 0px;
         }
-        """)
-
-        apply_glass_shadow(self, blur_radius=24, y_offset=6, alpha=120)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
-
-        # 🔔 HEADER
-        hdr = QHBoxLayout()
-        hdr.setSpacing(10)
-        
-        self.icon_lbl = QLabel()
-        if HAS_QTA:
-            self.icon_lbl.setPixmap(qta.icon('fa5s.bell', color='#ffffff').pixmap(14, 14))
-
-        self.title_lbl = QLabel("Notificaciones")
-        self.title_lbl.setStyleSheet("font-size:12px; font-weight:700; color:#ffffff; letter-spacing: 0.5px;")
-
-        # Contador de notificaciones
-        self.badge_count = QLabel("0")
-        self.badge_count.setFixedSize(20, 20)
-        self.badge_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.badge_count.setStyleSheet("""
-            background: rgba(245, 158, 11, 0.85);
-            color: #000000;
-            border-radius: 10px;
-            font-size: 9px;
-            font-weight: 800;
-        """)
-        self.badge_count.hide()
-
-        hdr.addWidget(self.icon_lbl)
-        hdr.addWidget(self.title_lbl)
-        hdr.addStretch()
-        hdr.addWidget(self.badge_count)
-
-        self.btn_close_notif = QPushButton("×")
-        self.btn_close_notif.setFixedSize(24, 24)
-        self.btn_close_notif.setStyleSheet("""
         QPushButton {
             background: transparent;
-            color: rgba(255,255,255,0.4);
             border: none;
-            font-size: 16px;
-            border-radius: 12px;
-        }
-        QPushButton:hover {
-            background: rgba(255,255,255,0.1);
-            color: #ffffff;
+            font-family: inherit;
         }
         """)
-        self.btn_close_notif.clicked.connect(self.close)
-
-        hdr.addWidget(self.btn_close_notif)
-        layout.addLayout(hdr)
-
-        # 📋 Contenedor para las notificaciones (SCROLL)
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFixedHeight(220)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                background: transparent;
-                border: none;
+ 
+        apply_glass_shadow(self, blur_radius=32, y_offset=8, alpha=140)
+ 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+ 
+        # ─── HEADER ──────────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        hdr.setSpacing(12)
+ 
+        self.icon_lbl = QLabel()
+        self.icon_lbl.setFixedSize(20, 20)
+        self.icon_lbl.setStyleSheet("background: rgba(255,255,255,0.04); border-radius: 10px;")
+        if HAS_QTA:
+            self.icon_lbl.setPixmap(qta.icon('fa5s.bell', color='rgba(255,255,255,0.7)').pixmap(14, 14))
+        hdr.addWidget(self.icon_lbl)
+ 
+        self.title_lbl = QLabel("Notificaciones")
+        self.title_lbl.setStyleSheet("""
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.92);
+            letter-spacing: 0.3px;
+        """)
+        hdr.addWidget(self.title_lbl)
+ 
+        self.badge_count = QLabel("0")
+        self.badge_count.setFixedSize(22, 22)
+        self.badge_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.badge_count.setStyleSheet("""
+            background: rgba(255, 255, 255, 0.06);
+            color: rgba(255, 255, 255, 0.5);
+            border-radius: 11px;
+            font-size: 10px;
+            font-weight: 600;
+        """)
+        self.badge_count.hide()
+        hdr.addWidget(self.badge_count)
+ 
+        hdr.addStretch()
+ 
+        self.btn_clear = QPushButton("Limpiar")
+        self.btn_clear.setFixedHeight(28)
+        self.btn_clear.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.04);
+                color: rgba(255,255,255,0.4);
+                border-radius: 8px;
+                font-size: 10px;
+                font-weight: 500;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.08);
+                color: rgba(255,255,255,0.7);
             }
         """)
-        
-        # Widget contenedor para las notificaciones
+        self.btn_clear.clicked.connect(self.clear_notifications)
+        hdr.addWidget(self.btn_clear)
+ 
+        self.btn_close_notif = QPushButton("✕")
+        self.btn_close_notif.setFixedSize(26, 26)
+        self.btn_close_notif.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: rgba(255,255,255,0.15);
+                border: none;
+                border-radius: 13px;
+                font-size: 14px;
+                font-weight: 300;
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.06);
+                color: rgba(255,255,255,0.5);
+            }
+        """)
+        self.btn_close_notif.clicked.connect(self.close)
+        hdr.addWidget(self.btn_close_notif)
+ 
+        layout.addLayout(hdr)
+ 
+        # ─── SEPARADOR ──────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background: rgba(255,255,255,0.03); border: none; max-height: 1px;")
+        layout.addWidget(sep)
+ 
+        # ─── SCROLL AREA ────────────────────────────────────────────
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFixedHeight(280)
+        self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+ 
         self.notif_container = QWidget()
         self.notif_container.setStyleSheet("background: transparent;")
         self.notif_layout = QVBoxLayout(self.notif_container)
-        self.notif_layout.setContentsMargins(2, 2, 2, 2)
-        self.notif_layout.setSpacing(8)
+        self.notif_layout.setContentsMargins(2, 4, 2, 4)
+        self.notif_layout.setSpacing(6)
         self.notif_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+ 
         self.scroll_area.setWidget(self.notif_container)
         layout.addWidget(self.scroll_area)
-
+ 
+        # ─── FOOTER ──────────────────────────────────────────────────
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+ 
+        self.footer_label = QLabel("Mostrando notificaciones recientes")
+        self.footer_label.setStyleSheet("font-size: 9px; color: rgba(255,255,255,0.12);")
+        footer.addWidget(self.footer_label)
+        footer.addStretch()
+ 
+        self.unread_label = QLabel()
+        self.unread_label.setStyleSheet("font-size: 9px; color: rgba(255,255,255,0.12);")
+        footer.addWidget(self.unread_label)
+ 
+        layout.addLayout(footer)
+ 
         self.notifications = []
-        self._add_default_notifications()
-
         self.layout_ref = layout
         self.hide()
-
+ 
+        self._initialized = True
+        self._add_default_notifications()
+ 
+    # ─────────────────────────────────────────────────────────────
+    #  Encabezado "HOY"
+    # ─────────────────────────────────────────────────────────────
+    def _ensure_date_header(self):
+        """Inserta el encabezado 'HOY' una sola vez, siempre fijo arriba."""
+        if self._has_date_header:
+            return
+        header = QLabel(datetime.now().strftime("HOY · %d %b").upper())
+        header.setStyleSheet("""
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            color: rgba(255,255,255,0.28);
+            padding: 2px 4px 4px 4px;
+        """)
+        self.notif_layout.insertWidget(0, header)
+        self._date_header_widget = header
+        self._has_date_header = True
+ 
     def _add_default_notifications(self):
-        """Agrega las notificaciones por defecto al abrir el panel."""
-        self.clear_notifications()
-        self.push_notification("NEXUS", "Sistema iniciado correctamente.")
-        self.push_notification("Actualización", "Nueva versión disponible.")
-        self.push_notification("Sistema protegido", "Protección activa correctamente.")
+        self._clear_layout_clean()
+        self.push_notification(" Sistema protegido", "Notificacion desactivada", priority="normal")
 
-    def clear_notifications(self):
-        """Elimina todas las notificaciones del panel."""
-        # Limpiar animaciones pendientes
-        self._animations.clear()
-        
+    def _clear_layout_clean(self):
         while self.notif_layout.count():
             item = self.notif_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+            if item and item.widget():
+                item.widget().deleteLater()
         self.notifications = []
+        self._notifications_data = []
         self._notification_count = 0
-        self._update_badge()
-
-    def _make_item(self, title: str, body: str, thumbnail_path=None) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("NotifItem")
-        frame.setStyleSheet("""
-        QFrame#NotifItem {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 12px;
-        }
-        QFrame#NotifItem:hover {
-            background: rgba(255,255,255,0.08);
-            border-color: rgba(255,255,255,0.12);
-        }
-        QLabel {
-            background: transparent;
-            border: none;
-        }
+        self._has_date_header = False
+ 
+    def _on_update_click(self):
+        self.push_notification("🔄 Actualizando...", "Descargando la versión 2.5.0", priority="high")
+ 
+    # ─────────────────────────────────────────────────────────────
+    #  Construcción de cada tarjeta
+    # ─────────────────────────────────────────────────────────────
+    def _make_item(self, title: str, body: str, thumbnail_path=None,
+                    priority: str = "normal", action_label: str = None,
+                    action_callback=None) -> QWidget:
+        container = QWidget()
+        container.setObjectName("NotifItem")
+        container.setFixedHeight(64)
+ 
+        bg_opacity = {"normal": "0.03", "high": "0.05", "urgent": "0.07"}
+        border_opacity = {"normal": "0.04", "high": "0.08", "urgent": "0.12"}
+        accent_color = {  # 🆕 acento de color por prioridad
+            "normal": "rgba(255,255,255,0.10)",
+            "high": "rgba(245,158,11,0.55)",
+            "urgent": "rgba(255,59,48,0.65)",
+        }.get(priority, "rgba(255,255,255,0.10)")
+ 
+        container.setStyleSheet(f"""
+            QWidget#NotifItem {{
+                background: rgba(255, 255, 255, {bg_opacity.get(priority, '0.03')});
+                border: 1px solid rgba(255, 255, 255, {border_opacity.get(priority, '0.04')});
+                border-left: 3px solid {accent_color};
+                border-radius: 12px;
+            }}
+            QWidget#NotifItem:hover {{
+                background: rgba(255, 255, 255, 0.06);
+                border-color: rgba(255, 255, 255, 0.10);
+            }}
+            QLabel {{ background: transparent; border: none; }}
         """)
-        
-        # Sombra sutil para cada item
-        item_shadow = QGraphicsDropShadowEffect(frame)
+ 
+        item_shadow = QGraphicsDropShadowEffect(container)
         item_shadow.setBlurRadius(10)
-        item_shadow.setColor(QColor(0, 0, 0, 30))
+        item_shadow.setColor(QColor(0, 0, 0, 25))
         item_shadow.setOffset(0, 2)
-        frame.setGraphicsEffect(item_shadow)
-
-        fl = QHBoxLayout(frame)
-        fl.setContentsMargins(12, 10, 12, 10)
-        fl.setSpacing(12)
-
-        # Thumbnail (si existe)
-        if thumbnail_path:
-            thumb = QLabel()
-            thumb.setFixedSize(36, 36)
-            thumb.setStyleSheet("border-radius: 8px; background: rgba(255,255,255,0.05);")
-            fl.addWidget(thumb)
-
-        txt = QVBoxLayout()
-        txt.setSpacing(3)
-
-        t = QLabel(title)
-        t.setStyleSheet("""
-            background: transparent;
-            border: none;
-            font-size:11px;
-            font-weight:700;
-            color:#ffffff;
-            letter-spacing: 0.3px;
+        container.setGraphicsEffect(item_shadow)
+ 
+        main_layout = QHBoxLayout(container)
+        main_layout.setContentsMargins(14, 10, 14, 10)
+        main_layout.setSpacing(12)
+ 
+        icon_container = QLabel()
+        icon_container.setFixedSize(36, 36)
+        icon_text = {"normal": "•", "high": "◆", "urgent": "⬤"}.get(priority, "•")
+        icon_container.setText(icon_text)
+        icon_container.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_container.setStyleSheet("""
+            border-radius: 10px;
+            background: rgba(255,255,255,0.04);
+            font-size: 16px;
+            color: rgba(255,255,255,0.3);
         """)
-
-        b = QLabel(body)
-        b.setWordWrap(True)
-        b.setStyleSheet("""
-            background: transparent;
-            border: none;
-            font-size:10px;
-            color:rgba(255,255,255,0.75);
-        """)
-
-        txt.addWidget(t)
-        txt.addWidget(b)
-
-        fl.addLayout(txt, 1)
-
-        return frame
-
+        main_layout.addWidget(icon_container)
+ 
+        content_layout = QVBoxLayout()
+        content_layout.setSpacing(2)
+ 
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
+ 
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.92);")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+ 
+        time_label = QLabel(datetime.now().strftime("%H:%M"))
+        time_label.setStyleSheet("font-size: 9px; color: rgba(255,255,255,0.2);")
+        header_layout.addWidget(time_label)
+ 
+        content_layout.addLayout(header_layout)
+ 
+        body_label = QLabel(body)
+        body_label.setWordWrap(True)
+        body_label.setStyleSheet("font-size: 10px; color: rgba(255,255,255,0.55);")
+        content_layout.addWidget(body_label)
+ 
+        main_layout.addLayout(content_layout, 1)
+ 
+        if action_label and action_callback:
+            action_btn = QPushButton(action_label)
+            action_btn.setFixedHeight(26)
+            action_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255,255,255,0.06);
+                    color: rgba(255,255,255,0.6);
+                    border: 1px solid rgba(255,255,255,0.06);
+                    border-radius: 8px;
+                    font-size: 10px;
+                    font-weight: 500;
+                    padding: 0 14px;
+                }
+                QPushButton:hover {
+                    background: rgba(255,255,255,0.12);
+                    border-color: rgba(255,255,255,0.12);
+                }
+                QPushButton:pressed { background: rgba(255,255,255,0.04); }
+            """)
+            action_btn.clicked.connect(action_callback)
+            main_layout.addWidget(action_btn)
+ 
+        return container
+ 
     def _update_badge(self):
-        """Actualiza el contador de notificaciones."""
         count = len(self.notifications)
+        unread = sum(1 for n in self._notifications_data if not n.get("read", False))
+ 
         if count > 0:
             self.badge_count.setText(str(count))
             self.badge_count.show()
         else:
             self.badge_count.hide()
-
+ 
+        self.unread_label.setText(f"{unread} no leída{'s' if unread != 1 else ''}" if unread > 0 else "Todas leídas")
+ 
+    # ─────────────────────────────────────────────────────────────
+    #  ANIMACIÓN — FIX del bug (antes usaba setWindowOpacity en un hijo)
+    # ─────────────────────────────────────────────────────────────
     def _animate_item(self, widget):
-        """Animación de entrada para una notificación usando QTimer."""
-        from PyQt6.QtCore import QTimer
-        
-        # Guardar referencia para evitar que se recoja el garbage collector
-        self._animations.append(widget)
-        
-        # Ocultar inicialmente
-        widget.setGraphicsEffect(None)
-        widget.setWindowOpacity(0.0)
-        original_pos = widget.pos()
-        widget.move(original_pos.x(), original_pos.y() + 20)
-        
-        def step1():
-            widget.setWindowOpacity(0.3)
-            widget.move(original_pos.x(), original_pos.y() + 14)
-        
-        def step2():
-            widget.setWindowOpacity(0.6)
-            widget.move(original_pos.x(), original_pos.y() + 8)
-        
-        def step3():
-            widget.setWindowOpacity(0.85)
-            widget.move(original_pos.x(), original_pos.y() + 3)
-        
-        def step4():
-            widget.setWindowOpacity(1.0)
-            widget.move(original_pos.x(), original_pos.y())
-            # Limpiar referencia
-            if widget in self._animations:
-                self._animations.remove(widget)
-        
-        # Ejecutar animación por pasos con QTimer
-        timers = []
-        for delay, func in [(0, step1), (80, step2), (160, step3), (240, step4)]:
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(func)
-            timer.start(delay)
-            timers.append(timer)
-
+        """Animación de entrada correcta: QGraphicsOpacityEffect + QPropertyAnimation.
+ 
+        Nunca usar widget.setWindowOpacity() aquí: ese método solo es válido
+        en ventanas top-level. Usarlo en un widget hijo (como esta tarjeta)
+        fuerza a Qt a crear un handle de ventana nativo para él, lo que en
+        una app translúcida y sin bordes produce artefactos de composición
+        (texto/ventanas de fondo "fantasma", como el bug reportado).
+        """
+        from PyQt6.QtCore import QParallelAnimationGroup
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+ 
+        effect = QGraphicsOpacityEffect(widget)
+        effect.setOpacity(0.0)
+        widget.setGraphicsEffect(effect)
+ 
+        end_pos = widget.pos()
+        start_pos = QPoint(end_pos.x(), end_pos.y() + 20)
+        widget.move(start_pos)
+ 
+        group = QParallelAnimationGroup(self)
+ 
+        pos_anim = QPropertyAnimation(widget, b"pos", self)
+        pos_anim.setDuration(280)
+        pos_anim.setStartValue(start_pos)
+        pos_anim.setEndValue(end_pos)
+        pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+ 
+        op_anim = QPropertyAnimation(effect, b"opacity", self)
+        op_anim.setDuration(240)
+        op_anim.setStartValue(0.0)
+        op_anim.setEndValue(1.0)
+        op_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+ 
+        group.addAnimation(pos_anim)
+        group.addAnimation(op_anim)
+        self._animations.append(group)
+ 
+        def _cleanup():
+            try:
+                widget.setGraphicsEffect(None)
+            except RuntimeError:
+                pass  # el widget pudo haber sido eliminado (ej. clear_notifications)
+            if group in self._animations:
+                self._animations.remove(group)
+ 
+        group.finished.connect(_cleanup)
+        group.start()
+ 
     def push_notification(self, title: str, body: str,
-                          thumbnail_path=None, action_label: str = None, action_callback=None):
-        """Agrega una nueva notificación al panel."""
-        
-        # Si hay más de MAX_NOTIFICATIONS, eliminar la más antigua
+                           thumbnail_path=None, action_label: str = None,
+                           action_callback=None, priority: str = "normal"):
+        """Agrega una nueva notificación premium."""
+ 
         if len(self.notifications) >= self._max_notifications:
             oldest = self.notif_layout.takeAt(self.notif_layout.count() - 1)
             if oldest and oldest.widget():
                 oldest.widget().deleteLater()
             if self.notifications:
                 self.notifications.pop(-1)
-        
-        item = self._make_item(title, body, thumbnail_path)
-
-        if action_label and action_callback:
-            btn = QPushButton(action_label)
-            btn.setFixedHeight(28)
-            btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(255,255,255,0.08);
-                color: #ffffff;
-                border: none;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 10px;
-                padding: 0 14px;
-            }
-            QPushButton:hover {
-                background: rgba(255,255,255,0.18);
-            }
-            """)
-            btn.clicked.connect(action_callback)
-            item.layout().addWidget(btn)
-
-        # Insertar al principio (más reciente arriba)
-        self.notif_layout.insertWidget(0, item)
+            if self._notifications_data:
+                self._notifications_data.pop(-1)
+ 
+        self._ensure_date_header()  # 🆕 asegura que "HOY" esté siempre arriba
+ 
+        item = self._make_item(title, body, thumbnail_path, priority, action_label, action_callback)
+ 
+        # El header (si existe) va en el índice 0; el item nuevo se inserta justo debajo.
+        insert_at = 1 if self._has_date_header else 0
+        self.notif_layout.insertWidget(insert_at, item)
+ 
         self.notifications.append(item)
+        self._notifications_data.append({
+            "title": title, "body": body, "priority": priority,
+            "timestamp": datetime.now(), "read": False,
+        })
         self._notification_count += 1
+ 
         self._update_badge()
-        
-        # Animación de entrada (usando el nuevo método sin painter)
         self._animate_item(item)
-        
-        # Mostrar el panel si está oculto
+ 
         if not self.isVisible():
             self.show()
             self.raise_()
-        
-        # Ajustar tamaño
+            self._fade_in()
+ 
         self.adjustSize()
-        
-        # Scroll al inicio (más reciente)
         self.scroll_area.verticalScrollBar().setValue(0)
-        
-        # Auto-ocultar después de 4 segundos si hay muchas notificaciones
+ 
         if len(self.notifications) >= 3:
-            self._hide_timer.start(4000)
-
+            self._hide_timer.start(5000)
+ 
+    def _fade_in(self):
+        """Fade-in del panel completo (esto SÍ es correcto: self es top-level)."""
+        self.setWindowOpacity(0.0)
+        animation = QPropertyAnimation(self, b"windowOpacity")
+        animation.setDuration(250)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start()
+        self._animations.append(animation)
+ 
+    def clear_notifications(self):
+        self._animations.clear()
+        count = self.notif_layout.count()
+        if count > 0:
+            widgets = [self.notif_layout.itemAt(i).widget()
+                       for i in range(count) if self.notif_layout.itemAt(i).widget()]
+            for widget in widgets:
+                widget.deleteLater()
+            self._clear_layout_clean()
+            self._update_badge()
+        else:
+            self._clear_layout_clean()
+ 
     def _auto_hide(self):
-        """Auto-oculta el panel después de un tiempo."""
         if self.isVisible() and len(self.notifications) >= 3:
             self.close()
-
+ 
     def showEvent(self, event):
-        """Cuando se muestra el panel, cargar notificaciones si está vacío."""
-        if self.notif_layout.count() == 0:
+        if self.notif_layout.count() == 0 and self._initialized:
             self._add_default_notifications()
         super().showEvent(event)
-
+ 
     def closeEvent(self, event):
-        """Cuando se cierra el panel, notificar al dock."""
-        # Limpiar animaciones pendientes
         self._animations.clear()
-        
-        # Buscar el BottomLeftDock y actualizar el estado de la campana
         main_window = self.window()
         if main_window and hasattr(main_window, "bottom_left_dock"):
             main_window.bottom_left_dock.set_notification(False)
         super().closeEvent(event)
+ 
+    def mark_all_read(self):
+        for data in self._notifications_data:
+            data["read"] = True
+        self._update_badge()
+
+class ShortcutsCard(QWidget):
+    """Panel de accesos directos premium con Liquid Glass real (igual que Spotify)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ShortcutsCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(420, 420)
+        self._radius = 22
+        self.drag_position = None
+
+        # Load shortcuts
+        self.shortcuts = []
+        self._load_shortcuts()
+
+        apply_glass_shadow(self, blur_radius=35, y_offset=8, alpha=140)
+
+        # Solo estilos internos (fondo lo pinta paintEvent)
+        self.setStyleSheet("""
+QLabel { background: transparent; border: none; }
+QPushButton { background: transparent; border: none; }
+""")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 16, 18, 12)
+        root.setSpacing(10)
+
+        # Header
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        title = QLabel("Accesos Directos")
+        title.setStyleSheet("color: rgba(255,255,255,0.92); font-size:15px; font-weight:700;")
+        header.addWidget(title)
+        header.addStretch()
+
+        self.btn_add = QPushButton()
+        self.btn_add.setFixedSize(28, 28)
+        self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.10);
+                border-radius: 14px;
+                border: 1px solid rgba(255,255,255,0.18);
+            }
+            QPushButton:hover {
+                background: rgba(255,255,255,0.20);
+                border: 1px solid rgba(255,255,255,0.35);
+            }
+        """)
+        if HAS_QTA:
+            self.btn_add.setIcon(qta.icon("fa5s.plus", color="white"))
+        self.btn_add.clicked.connect(self._add_shortcut)
+        header.addWidget(self.btn_add)
+        root.addLayout(header)
+
+        # Separator line
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: rgba(255,255,255,0.08);")
+        root.addWidget(sep)
+
+        # Scroll area para la grilla
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QWidget#gridContainer { background: transparent; }
+            QScrollBar:vertical {
+                background: rgba(255,255,255,0.03);
+                width: 5px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255,255,255,0.15);
+                border-radius: 2px;
+                min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
+        self.grid_container = QWidget()
+        self.grid_container.setObjectName("gridContainer")
+        from PyQt6.QtWidgets import QGridLayout
+        self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_layout.setContentsMargins(4, 8, 4, 8)
+        self.grid_layout.setSpacing(12)
+
+        self.scroll.setWidget(self.grid_container)
+        root.addWidget(self.scroll, 1)
+
+        # Hint label
+        self.hint_label = QLabel("Click + para agregar apps  ·  Click derecho para eliminar")
+        self.hint_label.setStyleSheet("color: rgba(255,255,255,0.25); font-size:10px;")
+        self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(self.hint_label)
+
+        self._refresh_grid()
+        self.hide()
+
+    # ── Liquid Glass Paint (idéntico al de Spotify) ──
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base MUY transparente
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 30))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 18))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 25))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Frost
+        painter.setBrush(QColor(255, 255, 255, 6))
+        painter.drawPath(path)
+
+        # 3) Sombra interior
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 20))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de cristal
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6, rect.top() + 2,
+            rect.width() - self._radius * 1.2, self._radius * 0.65
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
+
+    # ── Drag ──
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = event.globalPosition().toPoint() - self.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.drag_position and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.drag_position = None
+        super().mouseReleaseEvent(event)
+
+    # ── Data ──
+    def _load_shortcuts(self):
+        import json
+        from pathlib import Path
+        config_path = Path(__file__).parent / "config" / "shortcuts.json"
+        if config_path.exists():
+            try:
+                self.shortcuts = json.loads(config_path.read_text(encoding="utf-8"))
+            except:
+                self.shortcuts = []
+        else:
+            self.shortcuts = []
+
+    def _save_shortcuts(self):
+        import json
+        from pathlib import Path
+        config_path = Path(__file__).parent / "config" / "shortcuts.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(self.shortcuts, indent=4), encoding="utf-8")
+
+    def _get_exe_icon(self, exe_path):
+        """Extrae el icono del .exe y devuelve un QPixmap"""
+        try:
+            from PyQt6.QtWidgets import QFileIconProvider
+            from PyQt6.QtCore import QFileInfo
+            provider = QFileIconProvider()
+            info = QFileInfo(exe_path)
+            icon = provider.icon(info)
+            return icon.pixmap(40, 40)
+        except:
+            pass
+        # Fallback: icono genérico
+        if HAS_QTA:
+            return qta.icon('fa5s.cube', color='rgba(255,255,255,0.6)').pixmap(32, 32)
+        return QPixmap()
+
+    def _add_shortcut(self):
+        from PyQt6.QtWidgets import QFileDialog
+        import os
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar Aplicación", "",
+            "Ejecutables (*.exe);;Accesos directos (*.lnk);;Todos los archivos (*.*)"
+        )
+        if path:
+            name = os.path.basename(path).split(".")[0]
+            # Capitalizar bonito
+            name = name.replace("_", " ").replace("-", " ").title()
+            if len(name) > 14:
+                name = name[:13] + "…"
+            self.shortcuts.append({"name": name, "path": path})
+            self._save_shortcuts()
+            self._refresh_grid()
+            play_sound("success")
+
+    def _remove_shortcut(self, index):
+        if 0 <= index < len(self.shortcuts):
+            self.shortcuts.pop(index)
+            self._save_shortcuts()
+            self._refresh_grid()
+
+    def _open_shortcut(self, path):
+        import os
+        try:
+            os.startfile(path)
+            play_sound("open")
+        except Exception as e:
+            print(f"Error abriendo acceso directo: {e}")
+            play_sound("error")
+
+    def _refresh_grid(self):
+        # Limpiar grid
+        for i in reversed(range(self.grid_layout.count())):
+            w = self.grid_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+
+        # Llenar grid (5 columnas)
+        cols = 5
+        for i, sc in enumerate(self.shortcuts):
+            row, col = divmod(i, cols)
+
+            # Container vertical: icono + nombre
+            container = QWidget()
+            container.setFixedSize(68, 78)
+            container.setCursor(Qt.CursorShape.PointingHandCursor)
+            vl = QVBoxLayout(container)
+            vl.setContentsMargins(0, 0, 0, 0)
+            vl.setSpacing(4)
+            vl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            # Icono
+            icon_btn = QPushButton()
+            icon_btn.setFixedSize(48, 48)
+            icon_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255,255,255,0.06);
+                    border: 1px solid rgba(255,255,255,0.10);
+                    border-radius: 14px;
+                }
+                QPushButton:hover {
+                    background: rgba(255,255,255,0.16);
+                    border: 1px solid rgba(255,255,255,0.30);
+                }
+            """)
+            pix = self._get_exe_icon(sc["path"])
+            if pix and not pix.isNull():
+                icon_btn.setIcon(QIcon(pix))
+                icon_btn.setIconSize(QSize(32, 32))
+            icon_btn.clicked.connect(lambda checked, p=sc["path"]: self._open_shortcut(p))
+
+            # Click derecho para eliminar
+            icon_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            icon_btn.customContextMenuRequested.connect(lambda pos, idx=i: self._remove_shortcut(idx))
+
+            # Nombre
+            name_lbl = QLabel(sc["name"])
+            name_lbl.setStyleSheet("color: rgba(255,255,255,0.75); font-size:9px; font-weight:500;")
+            name_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name_lbl.setFixedWidth(68)
+
+            vl.addWidget(icon_btn, 0, Qt.AlignmentFlag.AlignCenter)
+            vl.addWidget(name_lbl)
+
+            self.grid_layout.addWidget(container, row, col)
+
+        # Update hint visibility
+        self.hint_label.setVisible(len(self.shortcuts) == 0)
 
 
 class FloatingSpotifyWidget(QWidget):
@@ -1279,173 +2107,291 @@ class FloatingSpotifyWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("SpotifyFloat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(320, 120)
+        self.setFixedSize(320, 150)  # 🔧 un poco más alto para el nuevo layout
         self.drag_position = None
-
-        # 💎 GLASS CLEAN
+        self._current_track_id = None
+        self._radius = 26  # 💎 tarjeta redondeada, no píldora completa (como la foto)
+        self._duration_ms = 0
+        self._seeking = False
+        self._pending_seek_ms = 0
+ 
+        # 💎 Solo estilos de contenido interno (el fondo lo pinta paintEvent)
         self.setStyleSheet("""
-QWidget#SpotifyFloat {
-    background: rgba(18,18,22,0.75);
-    border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 24px;
-}
-
 QLabel {
     background: transparent;
     border: none;
-    color: rgba(245,245,250,0.96);
 }
-
+ 
 QPushButton {
     background: transparent;
     border: none;
 }
-
+ 
 QPushButton:hover {
-    background: rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.10);
     border-radius: 15px;
 }
 """)
-
-        apply_glass_shadow(self, blur_radius=35, y_offset=8, alpha=180)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(12)
-
-        # 🎧 ART
+ 
+        apply_glass_shadow(self, blur_radius=35, y_offset=8, alpha=140)
+ 
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 16, 20, 14)
+        root.setSpacing(10)
+ 
+        # 🔝 FILA SUPERIOR: carátula + título/artista
+        top = QHBoxLayout()
+        top.setSpacing(12)
+ 
         self.lbl_art = QLabel()
-        self.lbl_art.setFixedSize(50, 50)
+        self.lbl_art.setFixedSize(44, 44)
         self.lbl_art.setStyleSheet("""
-        background: rgba(255,255,255,0.06);
-        border-radius: 8px;
+        background: rgba(255,255,255,0.10);
+        border-radius: 10px;
         """)
         self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+ 
         if HAS_QTA:
-            self.lbl_art.setPixmap(qta.icon('fa5b.spotify', color='rgba(255,255,255,0.7)').pixmap(20, 20))
-
-        layout.addWidget(self.lbl_art)
-
-        # 📄 RIGHT
-        right = QVBoxLayout()
-        right.setSpacing(4)
-
-        # 🔝 TOP ROW
-        top_row = QHBoxLayout()
+            self.lbl_art.setPixmap(qta.icon('fa5b.spotify', color='rgba(255,255,255,0.75)').pixmap(20, 20))
+ 
+        top.addWidget(self.lbl_art)
+ 
         info_col = QVBoxLayout()
-        info_col.setSpacing(1)
-
+        info_col.setSpacing(2)
+ 
         self.lbl_track = QLabel("Not Playing")
         self.lbl_track.setStyleSheet("""
-        font-size:11px;
-        font-weight:600;
-        color:#ffffff;
+        font-size:14px;
+        font-weight:700;
+        color: rgba(255,255,255,0.95);
         """)
-
+ 
         self.lbl_artist = QLabel("Spotify")
         self.lbl_artist.setStyleSheet("""
-        font-size:10px;
-        color:rgba(200,200,210,0.70);
+        font-size:11px;
+        font-weight:600;
+        color: rgba(190,210,255,0.90);
         """)
-
+ 
         info_col.addWidget(self.lbl_track)
         info_col.addWidget(self.lbl_artist)
-
-        top_row.addLayout(info_col)
-        top_row.addStretch()
-
-        if HAS_QTA:
-            self.btn_shuffle = QPushButton()
-            self.btn_shuffle.setFixedSize(20, 20)
-            self.btn_shuffle.setIcon(qta.icon('fa5s.random', color='rgba(200,200,210,0.6)'))
-            self.btn_shuffle.setIconSize(QSize(12, 12))
-            top_row.addWidget(self.btn_shuffle)
-
-        right.addLayout(top_row)
-
-        # 📊 PROGRESS
+ 
+        top.addLayout(info_col, 1)
+        root.addLayout(top)
+ 
+        # 📊 BARRA DE PROGRESO (ahora interactiva: click + arrastre = seek)
         self.prog_bar = QProgressBar()
         self.prog_bar.setRange(0, 100)
         self.prog_bar.setValue(0)
         self.prog_bar.setTextVisible(False)
-        self.prog_bar.setFixedHeight(3)
-        # Progress Bar
-        self.prog_bar = QProgressBar()
-        self.prog_bar.setRange(0, 100)
-        self.prog_bar.setValue(0)
-        self.prog_bar.setTextVisible(False)
-        self.prog_bar.setFixedHeight(3)
+        self.prog_bar.setFixedHeight(4)
+        self.prog_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.prog_bar.setStyleSheet('''
-        QProgressBar { background: rgba(255,255,255,0.08); border: none; border-radius: 2px; }
+        QProgressBar { background: rgba(255,255,255,0.15); border: none; border-radius: 2px; }
         QProgressBar::chunk { background: rgba(255,255,255,0.85); border-radius: 2px; }
         ''')
-
-        
+        # 🔧 interceptamos el mouse para poder adelantar/atrasar
+        self.prog_bar.mousePressEvent = self._prog_mouse_press
+        self.prog_bar.mouseMoveEvent = self._prog_mouse_move
+        self.prog_bar.mouseReleaseEvent = self._prog_mouse_release
+ 
+        root.addWidget(self.prog_bar)
+ 
+        # ⏱️ TIEMPOS (debajo de la barra, izquierda/derecha, como en la foto)
+        time_row = QHBoxLayout()
         self.lbl_time_l = QLabel("0:00")
-        self.lbl_time_l.setStyleSheet("font-size:8px;color:rgba(200,200,210,0.55);")
+        self.lbl_time_l.setStyleSheet("font-size:11px; font-weight:600; color: rgba(255,255,255,0.70);")
         self.lbl_time_r = QLabel("0:00")
-        self.lbl_time_r.setStyleSheet("font-size:8px;color:rgba(200,200,210,0.55);")
-        
-        prog_row = QHBoxLayout()
-        prog_row.setSpacing(4)
-        prog_row.addWidget(self.lbl_time_l)
-        prog_row.addWidget(self.prog_bar, 1)
-        prog_row.addWidget(self.lbl_time_r)
-        
-        right.addLayout(prog_row)
-
+        self.lbl_time_r.setStyleSheet("font-size:11px; font-weight:600; color: rgba(255,255,255,0.70);")
+        time_row.addWidget(self.lbl_time_l)
+        time_row.addStretch()
+        time_row.addWidget(self.lbl_time_r)
+        root.addLayout(time_row)
+ 
+        # ⏯️ CONTROLES (centrados)
         ctrl = QHBoxLayout()
-        ctrl.setSpacing(4)
+        ctrl.setSpacing(22)
         ctrl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+ 
         if HAS_QTA:
             self.btn_prev = QPushButton()
-            self.btn_prev.setFixedSize(26, 26)
-            self.btn_prev.setIcon(qta.icon('fa5s.step-backward', color='rgba(220,220,230,0.85)'))
-            self.btn_prev.setIconSize(QSize(11, 11))
-
+            self.btn_prev.setFixedSize(32, 32)
+            self.btn_prev.setIcon(qta.icon('fa5s.step-backward', color='rgba(255,255,255,0.85)'))
+            self.btn_prev.setIconSize(QSize(15, 15))
+ 
             self.btn_play = QPushButton()
-            self.btn_play.setFixedSize(30, 30)
-            self.btn_play.setIcon(qta.icon('fa5s.pause', color='rgba(10,10,15,0.95)'))
-            self.btn_play.setIconSize(QSize(13, 13))
-            self.btn_play.setStyleSheet("""
-            QPushButton {
-                background: rgba(255,255,255,0.85);
-                border-radius: 15px;
-            }
-            QPushButton:hover {
-                background: white;
-            }
-            """)
-
+            self.btn_play.setFixedSize(36, 36)
+            self.btn_play.setIcon(qta.icon('fa5s.pause', color='rgba(255,255,255,0.95)'))
+            self.btn_play.setIconSize(QSize(17, 17))
+ 
             self.btn_next = QPushButton()
-            self.btn_next.setFixedSize(26, 26)
-            self.btn_next.setIcon(qta.icon('fa5s.step-forward', color='rgba(220,220,230,0.85)'))
-            self.btn_next.setIconSize(QSize(11, 11))
-
+            self.btn_next.setFixedSize(32, 32)
+            self.btn_next.setIcon(qta.icon('fa5s.step-forward', color='rgba(255,255,255,0.85)'))
+            self.btn_next.setIconSize(QSize(15, 15))
+ 
             ctrl.addWidget(self.btn_prev)
             ctrl.addWidget(self.btn_play)
             ctrl.addWidget(self.btn_next)
-
+ 
             self.btn_prev.clicked.connect(lambda: self._press("prevtrack"))
             self.btn_play.clicked.connect(lambda: self._press("playpause"))
             self.btn_next.clicked.connect(lambda: self._press("nexttrack"))
-
-        right.addLayout(ctrl)
-        layout.addLayout(right)
-
+            def _press(self, key):
+                play_sound("click") 
+ 
+        root.addLayout(ctrl)
+ 
         # ⏱️ TIMER
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_playback_info)
         self.timer.start(5000)
-
+ 
         QTimer.singleShot(800, self.update_playback_info)
         self.hide()
-
+ 
         # 🔥 CARGAR POSICIÓN GUARDADA AL INICIAR
         QTimer.singleShot(100, self.load_position)
-
+ 
+    def showEvent(self, event):
+        """Aplica el blur nativo de Windows cada vez que el widget se muestra
+        (hay que hacerlo aquí porque necesitamos el HWND real, que solo
+        existe una vez que la ventana fue creada por el sistema)."""
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+ 
+    def paintEvent(self, event):
+        """Fondo liquid glass REAL: muy transparente, con un leve tinte
+        y bordes de luz. Si apply_acrylic_blur funcionó (Windows), el
+        sistema operativo se encarga del desenfoque de lo que hay detrás;
+        esta capa solo agrega el tinte y los brillos de vidrio."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+ 
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+ 
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+ 
+        # 1) Base MUY transparente (tinte sutil, no tarjeta opaca)
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 35))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 22))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 30))
+ 
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+ 
+        # 2) Frost casi imperceptible (solo textura, no opacidad)
+        painter.setBrush(QColor(255, 255, 255, 8))
+        painter.drawPath(path)
+ 
+        # 3) Sombra interior abajo, muy leve, para dar profundidad
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 25))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+ 
+        # 4) Borde de luz (el que realmente vende el efecto "cristal")
+        painter.setPen(QPen(QColor(255, 255, 255, 90), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+ 
+        # 5) Reflejo superior curvo (sutil)
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6,
+            rect.top() + 2,
+            rect.width() - self._radius * 1.2,
+            self._radius * 0.7
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+ 
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 45))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+ 
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+ 
+        super().paintEvent(event)
+ 
+    # ── 🎯 SEEK: adelantar/atrasar tocando o arrastrando la barra ──
+    def _prog_seek_to(self, x):
+        w = self.prog_bar.width()
+        if w <= 0 or self._duration_ms <= 0:
+            return
+        frac = max(0.0, min(1.0, x / w))
+        new_ms = int(frac * self._duration_ms)
+        self._pending_seek_ms = new_ms
+ 
+        # Reflejar de inmediato en la UI (feedback visual instantáneo)
+        self.prog_bar.setValue(int(frac * 100))
+        pos_sec = new_ms // 1000
+        self.lbl_time_l.setText(f"{pos_sec//60}:{pos_sec%60:02d}")
+ 
+    def _prog_mouse_press(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._seeking = True
+            self._prog_seek_to(event.position().x())
+ 
+    def _prog_mouse_move(self, event):
+        if self._seeking:
+            self._prog_seek_to(event.position().x())
+ 
+    def _prog_mouse_release(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._seeking:
+            self._seeking = False
+            self._do_seek(self._pending_seek_ms)
+ 
+    def _do_seek(self, position_ms):
+        def run():
+            try:
+                import logging
+                logging.getLogger('spotipy').setLevel(logging.CRITICAL)
+ 
+                from memory.config_manager import load_api_keys, BASE_DIR
+                cfg = load_api_keys()
+ 
+                cid = cfg.get("spotify_client_id")
+                csec = cfg.get("spotify_client_secret")
+ 
+                if not (cid and csec):
+                    return
+ 
+                import spotipy
+                from spotipy.oauth2 import SpotifyOAuth
+ 
+                sp_oauth = SpotifyOAuth(
+                    client_id=cid,
+                    client_secret=csec,
+                    redirect_uri=cfg.get("spotify_redirect_uri", "http://127.0.0.1:8765/callback"),
+                    scope="user-modify-playback-state user-read-playback-state user-read-currently-playing",
+                    open_browser=False,
+                    cache_path=str(BASE_DIR / ".spotify_cache")
+                )
+ 
+                tok = sp_oauth.get_cached_token()
+                if not tok:
+                    return
+ 
+                sp = spotipy.Spotify(auth_manager=sp_oauth)
+                devs = sp.devices().get("devices", [])
+                did = next((d["id"] for d in devs if d["is_active"]), devs[0]["id"] if devs else None)
+ 
+                sp.seek_track(position_ms, device_id=did)
+                QTimer.singleShot(400, self.update_playback_info)
+            except Exception as e:
+                print(f"[Spotify] Error al hacer seek: {e}")
+ 
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+ 
     def load_position(self):
         """Carga la posición guardada del widget"""
         try:
@@ -1461,22 +2407,22 @@ QPushButton:hover {
                 print("[Spotify] No hay posición guardada, usando por defecto")
         except Exception as e:
             print(f"[Spotify] Error cargando posición: {e}")
-
+ 
     def _press(self, key):
         try:
             import logging
             logging.getLogger('spotipy').setLevel(logging.CRITICAL)
-
+ 
             from memory.config_manager import load_api_keys, BASE_DIR
             cfg = load_api_keys()
-
+ 
             cid = cfg.get("spotify_client_id")
             csec = cfg.get("spotify_client_secret")
-
+ 
             if cid and csec:
                 import spotipy
                 from spotipy.oauth2 import SpotifyOAuth
-
+ 
                 sp_oauth = SpotifyOAuth(
                     client_id=cid,
                     client_secret=csec,
@@ -1485,14 +2431,14 @@ QPushButton:hover {
                     open_browser=False,
                     cache_path=str(BASE_DIR / ".spotify_cache")
                 )
-
+ 
                 tok = sp_oauth.get_cached_token()
-
+ 
                 if tok:
                     sp = spotipy.Spotify(auth_manager=sp_oauth)
                     devs = sp.devices().get("devices", [])
                     did = next((d["id"] for d in devs if d["is_active"]), devs[0]["id"] if devs else None)
-
+ 
                     if key == "playpause":
                         c = sp.current_playback()
                         if c:
@@ -1501,12 +2447,12 @@ QPushButton:hover {
                         sp.next_track(device_id=did)
                     elif key == "prevtrack":
                         sp.previous_track(device_id=did)
-
+ 
                     QTimer.singleShot(400, self.update_playback_info)
                     return
         except Exception:
             pass
-
+ 
         try:
             import pyautogui
             pyautogui.press({
@@ -1516,103 +2462,135 @@ QPushButton:hover {
             }[key])
         except Exception:
             pass
-
+ 
     def update_playback_info(self):
-        try:
-            import logging
-            logging.getLogger('spotipy').setLevel(logging.CRITICAL)
-
-            from memory.config_manager import load_api_keys, BASE_DIR
-            cfg = load_api_keys()
-
-            cid = cfg.get("spotify_client_id")
-            csec = cfg.get("spotify_client_secret")
-
-            if not cid or not csec:
-                return
-
-            import spotipy
-            from spotipy.oauth2 import SpotifyOAuth
-
-            sp_oauth = SpotifyOAuth(
-                client_id=cid,
-                client_secret=csec,
-                redirect_uri=cfg.get("spotify_redirect_uri", "http://127.0.0.1:8765/callback"),
-                scope="user-modify-playback-state user-read-playback-state user-read-currently-playing",
-                open_browser=False,
-                cache_path=str(BASE_DIR / ".spotify_cache")
-            )
-
-            tok = sp_oauth.get_cached_token()
-            if not tok:
-                return
-
-            sp = spotipy.Spotify(auth_manager=sp_oauth)
-            curr = sp.current_playback()
-
-            if curr and curr.get("item"):
-                if not self.isVisible() and hasattr(self.window(), "animate_show_widget"):
-                    self.window().animate_show_widget(self)
-                item = curr["item"]
-
-                name = item["name"][:28] + ("…" if len(item["name"]) > 28 else "")
-                artist = item["artists"][0]["name"][:30] + ("…" if len(item["artists"][0]["name"]) > 30 else "")
-
-                self.lbl_track.setText(name)
-                self.lbl_artist.setText(artist)
-
-                dur = item["duration_ms"] // 1000
-                pos = curr["progress_ms"] // 1000
-
-                self.prog_bar.setValue(int(pos / dur * 100) if dur else 0)
-
-                self.lbl_time_l.setText(f"{pos//60}:{pos%60:02d}")
-                self.lbl_time_r.setText(f"{dur//60}:{dur%60:02d}")
-
-                if HAS_QTA:
-                    icon = 'fa5s.pause' if curr["is_playing"] else 'fa5s.play'
-                    self.btn_play.setIcon(qta.icon(icon, color='rgba(10,10,15,0.95)'))
-
-                images = item.get("album", {}).get("images", [])
-                if images:
-                    try:
+        def fetch_data():
+            from PyQt6.QtCore import QMetaObject, Qt as _Qt, Q_ARG
+            try:
+                import logging
+                logging.getLogger('spotipy').setLevel(logging.CRITICAL)
+ 
+                from memory.config_manager import load_api_keys, BASE_DIR
+                cfg = load_api_keys()
+ 
+                cid = cfg.get("spotify_client_id")
+                csec = cfg.get("spotify_client_secret")
+ 
+                if not cid or not csec:
+                    return
+ 
+                import spotipy
+                from spotipy.oauth2 import SpotifyOAuth
+ 
+                sp_oauth = SpotifyOAuth(
+                    client_id=cid,
+                    client_secret=csec,
+                    redirect_uri=cfg.get("spotify_redirect_uri", "http://127.0.0.1:8765/callback"),
+                    scope="user-modify-playback-state user-read-playback-state user-read-currently-playing",
+                    open_browser=False,
+                    cache_path=str(BASE_DIR / ".spotify_cache")
+                )
+ 
+                tok = sp_oauth.get_cached_token()
+                if not tok:
+                    return
+ 
+                sp = spotipy.Spotify(auth_manager=sp_oauth)
+                curr = sp.current_playback()
+ 
+                if curr and curr.get("item"):
+                    item = curr["item"]
+                    data = {
+                        "is_playing": curr["is_playing"],
+                        "name": item["name"],
+                        "artist": item["artists"][0]["name"] if item.get("artists") else "Desconocido",
+                        "duration_ms": item["duration_ms"],
+                        "progress_ms": curr["progress_ms"],
+                        "id": item.get("id"),
+                        "image_url": item.get("album", {}).get("images", [{}])[-1].get("url") if item.get("album", {}).get("images") else None
+                    }
+                    if data["image_url"] and data["id"] != getattr(self, "_current_track_id", None):
                         import urllib.request as urllib_req
-                        from PyQt6.QtGui import QPixmap
-
-                        data = urllib_req.urlopen(images[-1]["url"], timeout=3).read()
-                        pix = QPixmap()
-                        pix.loadFromData(data)
-
-                        pix = pix.scaled(
-                            50, 50,
-                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                            Qt.TransformationMode.SmoothTransformation
-                        )
-
-                        self.lbl_art.setPixmap(pix)
-                        self.lbl_art.setStyleSheet("border-radius:8px;")
-
-                    except Exception:
-                        pass
-            else:
-                self.lbl_track.setText("Not Playing")
-                self.lbl_artist.setText("Spotify")
-                if self.isVisible() and hasattr(self.window(), "animate_hide_widget"):
-                    self.window().animate_hide_widget(self)
-
-        except Exception:
-            pass
-
+                        try:
+                            data["image_data"] = urllib_req.urlopen(data["image_url"], timeout=3).read()
+                        except:
+                            data["image_data"] = None
+                    else:
+                        data["image_data"] = None
+ 
+                    QMetaObject.invokeMethod(self, "_on_playback_info_ready",
+                                             _Qt.ConnectionType.QueuedConnection,
+                                             Q_ARG(dict, data))
+                else:
+                    QMetaObject.invokeMethod(self, "_on_playback_info_ready",
+                                             _Qt.ConnectionType.QueuedConnection,
+                                             Q_ARG(dict, {}))
+            except Exception as e:
+                pass
+ 
+        import threading
+        threading.Thread(target=fetch_data, daemon=True).start()
+ 
+    @pyqtSlot(dict)
+    def _on_playback_info_ready(self, data):
+        if not data:
+            self.lbl_track.setText("Not Playing")
+            self.lbl_artist.setText("Spotify")
+            self._duration_ms = 0
+            if self.isVisible() and hasattr(self.window(), "animate_hide_widget"):
+                self.window().animate_hide_widget(self)
+            return
+ 
+        if not self.isVisible() and hasattr(self.window(), "animate_show_widget"):
+            self.window().animate_show_widget(self)
+ 
+        name = data["name"][:28] + ("…" if len(data["name"]) > 28 else "")
+        artist = data["artist"][:30] + ("…" if len(data["artist"]) > 30 else "")
+ 
+        self.lbl_track.setText(name)
+        self.lbl_artist.setText(artist)
+ 
+        self._duration_ms = data["duration_ms"]
+        dur = data["duration_ms"] // 1000
+        pos = data["progress_ms"] // 1000
+ 
+        # 🔧 mientras el usuario está arrastrando, no pisamos su valor con el del servidor
+        if not self._seeking:
+            self.prog_bar.setValue(int(pos / dur * 100) if dur else 0)
+            self.lbl_time_l.setText(f"{pos//60}:{pos%60:02d}")
+        self.lbl_time_r.setText(f"{dur//60}:{dur%60:02d}")
+ 
+        if HAS_QTA:
+            icon = 'fa5s.pause' if data["is_playing"] else 'fa5s.play'
+            self.btn_play.setIcon(qta.icon(icon, color='rgba(255,255,255,0.95)'))
+ 
+        if data.get("id") != self._current_track_id:
+            self._current_track_id = data.get("id")
+            if data.get("image_data"):
+                try:
+                    from PyQt6.QtGui import QPixmap
+                    pix = QPixmap()
+                    pix.loadFromData(data["image_data"])
+                    pix = pix.scaled(
+                        44, 44,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.lbl_art.setPixmap(pix)
+                    self.lbl_art.setStyleSheet("border-radius:10px;")
+                except Exception:
+                    pass
+ 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             print(f"[Spotify] Click en: {self.drag_position}")
-
+ 
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position is not None:
             self.move(event.globalPosition().toPoint() - self.drag_position)
             print(f"[Spotify] Moviendo a: {self.x()}, {self.y()}")
-
+ 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.drag_position is not None:
             # Guardar posición al soltar
@@ -1629,6 +2607,88 @@ QPushButton:hover {
             self.drag_position = None
         super().mouseReleaseEvent(event)
 
+# ─────────────────────────────────────────────────────────────
+# 🎵 CARÁTULA REAL DE WINDOWS MEDIA (SMTC)
+# Requiere: pip install winsdk
+# Esto lee la sesión activa de reproducción (Spotify, YouTube en
+# el navegador, apps nativas, etc.) usando la misma API que usa
+# el propio "Now Playing" de Windows, incluida la carátula.
+# ─────────────────────────────────────────────────────────────
+def fetch_windows_media_info():
+    """
+    Devuelve un dict:
+    {
+        "title": str, "artist": str, "is_playing": bool,
+        "position": int (seg), "duration": int (seg),
+        "thumb_bytes": bytes | None  (PNG/JPEG crudo, listo para QPixmap)
+    }
+    o None si no hay sesión activa. Debe llamarse desde un hilo
+    aparte (usa asyncio internamente) para no congelar la UI.
+    """
+    try:
+        import asyncio
+        from winsdk.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as MediaManager
+        )
+        from winsdk.windows.storage.streams import DataReader, Buffer, InputStreamOptions
+
+        async def _get():
+            mgr = await MediaManager.request_async()
+            session = mgr.get_current_session()
+            if session is None:
+                return None
+
+            info = await session.try_get_media_properties_async()
+            timeline = session.get_timeline_properties()
+            playback_info = session.get_playback_info()
+
+            title = info.title or ""
+            artist = info.artist or ""
+            is_playing = (
+                playback_info.playback_status
+                == playback_info.playback_status.__class__.PLAYING
+            )
+
+            pos = int(timeline.position.total_seconds()) if timeline.position else 0
+            dur = int(timeline.end_time.total_seconds()) if timeline.end_time else 0
+
+            thumb_bytes = None
+            thumb_ref = info.thumbnail
+            if thumb_ref is not None:
+                stream = await thumb_ref.open_read_async()
+                size = stream.size
+                if size > 0:
+                    buffer = Buffer(size)
+                    await stream.read_async(buffer, size, InputStreamOptions.READ_AHEAD)
+                    reader = DataReader.from_buffer(buffer)
+                    raw = bytearray(size)
+                    reader.read_bytes(raw)
+                    thumb_bytes = bytes(raw)
+
+            return {
+                "title": title,
+                "artist": artist,
+                "is_playing": is_playing,
+                "position": pos,
+                "duration": dur,
+                "thumb_bytes": thumb_bytes,
+            }
+
+        # Cada hilo nuevo necesita su propio event loop para winsdk/asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(_get())
+        finally:
+            loop.close()
+
+    except ImportError:
+        print("[WindowsMedia] Falta 'winsdk'. Instala con: pip install winsdk")
+        return None
+    except Exception as e:
+        print(f"[WindowsMedia] Error leyendo sesión: {e}")
+        return None
+
 
 class FloatingMediaWidget(QWidget):
     seek_requested = pyqtSignal(int)
@@ -1637,24 +2697,17 @@ class FloatingMediaWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("MediaFloat")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(360, 110)
+        self.setFixedSize(320, 150)  # 💎 mismo tamaño que la tarjeta de Spotify
         self.drag_position = None
         self._is_playing = False
         self._dur = 0
+        self._current_thumb_hash = None
+        self._radius = 26  # 💎 tarjeta redondeada, igual que Spotify (ya no es píldora)
+        self._seeking = False
+        self._pending_seek_ms = 0
 
-        # ── ESTILO LIQUID GLASS PURO ──
+        # ── ESTILO LIQUID GLASS (solo contenido interno; el fondo lo pinta paintEvent) ──
         self.setStyleSheet('''
-QWidget#MediaFloat {
-    background: qlineargradient(
-        x1:0, y1:0, x2:1, y2:1,
-        stop:0 rgba(255, 255, 255, 0.08),
-        stop:0.5 rgba(255, 255, 255, 0.04),
-        stop:1 rgba(255, 255, 255, 0.02)
-    );
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 24px;
-}
-
 QLabel {
     background: transparent;
     border: none;
@@ -1664,169 +2717,108 @@ QLabel {
 QPushButton {
     background: transparent;
     border: none;
-    border-radius: 16px;
 }
 
 QPushButton:hover {
-    background: rgba(255, 255, 255, 0.06);
-}
-
-QPushButton:pressed {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255,255,255,0.10);
+    border-radius: 15px;
 }
 ''')
 
-        # ── SOMBRA LIQUID GLASS ──
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(50)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        shadow.setOffset(0, 10)
-        self.setGraphicsEffect(shadow)
+        apply_glass_shadow(self, blur_radius=35, y_offset=8, alpha=140)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 14, 18, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(20, 16, 20, 14)
+        root.setSpacing(10)
 
-        # ── FILA SUPERIOR ──
+        # 🔝 FILA SUPERIOR: carátula + título/artista
         top = QHBoxLayout()
-        top.setSpacing(14)
-        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
 
-        # ✅ Carátula EXACTAMENTE del tamaño del ícono (sin padding extra)
         self.lbl_art = QLabel()
-        self.lbl_art.setFixedSize(44, 44)  # Tamaño exacto
-        self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_art.setFixedSize(44, 44)
         self.lbl_art.setStyleSheet("""
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 10px;
+        background: rgba(255,255,255,0.10);
+        border-radius: 10px;
         """)
+        self.lbl_art.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         if HAS_QTA:
-            self.lbl_art.setPixmap(
-                qta.icon('fa5b.youtube', color='rgba(255,255,255,0.30)').pixmap(22, 22)
-            )
+            self.lbl_art.setPixmap(qta.icon('fa5b.youtube', color='rgba(255,255,255,0.75)').pixmap(20, 20))
+
         top.addWidget(self.lbl_art)
 
-        # Columna info
-        info = QVBoxLayout()
-        info.setSpacing(1)
-        info.setContentsMargins(0, 2, 0, 2)
+        info_col = QVBoxLayout()
+        info_col.setSpacing(2)
 
         self.lbl_track = QLabel("Not Playing")
         self.lbl_track.setStyleSheet("""
-            font-size:13px;
-            font-weight:600;
-            color: rgba(255,255,255,0.95);
-            letter-spacing: 0.3px;
+        font-size:14px;
+        font-weight:700;
+        color: rgba(255,255,255,0.95);
         """)
-        self.lbl_track.setMaximumWidth(200)
 
         self.lbl_artist = QLabel("Windows Media")
         self.lbl_artist.setStyleSheet("""
-            font-size:11px;
-            color: rgba(255,255,255,0.45);
-            letter-spacing: 0.2px;
+        font-size:11px;
+        font-weight:600;
+        color: rgba(190,210,255,0.90);
         """)
-        self.lbl_artist.setMaximumWidth(200)
 
-        info.addWidget(self.lbl_track)
-        info.addWidget(self.lbl_artist)
-        top.addLayout(info, 1)
+        info_col.addWidget(self.lbl_track)
+        info_col.addWidget(self.lbl_artist)
 
-        # Punto de estado
-        self.dot = QLabel("●")
-        self.dot.setFixedSize(16, 16)
-        self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
-        top.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignTop)
-
+        top.addLayout(info_col, 1)
         root.addLayout(top)
 
-        # ── BARRA DE PROGRESO ──
+        # 📊 BARRA DE PROGRESO (interactiva: click + arrastre = seek)
         self.prog_bar = QProgressBar()
-        self.prog_bar.setRange(0, 1000)
+        self.prog_bar.setRange(0, 100)
         self.prog_bar.setValue(0)
         self.prog_bar.setTextVisible(False)
-        self.prog_bar.setFixedHeight(3)
+        self.prog_bar.setFixedHeight(4)
+        self.prog_bar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.prog_bar.setStyleSheet('''
-QProgressBar {
-    background: rgba(255, 255, 255, 0.06);
-    border: none;
-    border-radius: 2px;
-}
-QProgressBar::chunk {
-    background: qlineargradient(
-        x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(255, 255, 255, 0.60),
-        stop:1 rgba(255, 255, 255, 0.30)
-    );
-    border-radius: 2px;
-}
-''')
-        self.prog_bar.mousePressEvent = self._on_prog_click
+        QProgressBar { background: rgba(255,255,255,0.15); border: none; border-radius: 2px; }
+        QProgressBar::chunk { background: rgba(255,255,255,0.85); border-radius: 2px; }
+        ''')
+        self.prog_bar.mousePressEvent = self._prog_mouse_press
+        self.prog_bar.mouseMoveEvent = self._prog_mouse_move
+        self.prog_bar.mouseReleaseEvent = self._prog_mouse_release
 
+        root.addWidget(self.prog_bar)
+
+        # ⏱️ TIEMPOS (debajo de la barra, izquierda/derecha)
+        time_row = QHBoxLayout()
         self.lbl_time_l = QLabel("0:00")
-        self.lbl_time_l.setStyleSheet("""
-            font-size:8px;
-            color: rgba(255,255,255,0.25);
-            font-variant-numeric:tabular-nums;
-        """)
+        self.lbl_time_l.setStyleSheet("font-size:11px; font-weight:600; color: rgba(255,255,255,0.70);")
         self.lbl_time_r = QLabel("0:00")
-        self.lbl_time_r.setStyleSheet("""
-            font-size:8px;
-            color: rgba(255,255,255,0.25);
-            font-variant-numeric:tabular-nums;
-        """)
+        self.lbl_time_r.setStyleSheet("font-size:11px; font-weight:600; color: rgba(255,255,255,0.70);")
+        time_row.addWidget(self.lbl_time_l)
+        time_row.addStretch()
+        time_row.addWidget(self.lbl_time_r)
+        root.addLayout(time_row)
 
-        prog_row = QHBoxLayout()
-        prog_row.setSpacing(6)
-        prog_row.setContentsMargins(0, 0, 0, 0)
-        prog_row.addWidget(self.lbl_time_l)
-        prog_row.addWidget(self.prog_bar, 1)
-        prog_row.addWidget(self.lbl_time_r)
-        root.addLayout(prog_row)
-
-        # ── CONTROLES ──
+        # ⏯️ CONTROLES (centrados)
         ctrl = QHBoxLayout()
-        ctrl.setSpacing(4)
-        ctrl.setContentsMargins(0, 0, 0, 0)
-        ctrl.addStretch()
+        ctrl.setSpacing(22)
+        ctrl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if HAS_QTA:
             self.btn_prev = QPushButton()
             self.btn_prev.setFixedSize(32, 32)
-            self.btn_prev.setIcon(
-                qta.icon('fa5s.step-backward', color='rgba(255,255,255,0.40)')
-            )
-            self.btn_prev.setIconSize(QSize(14, 14))
+            self.btn_prev.setIcon(qta.icon('fa5s.step-backward', color='rgba(255,255,255,0.85)'))
+            self.btn_prev.setIconSize(QSize(15, 15))
 
             self.btn_play = QPushButton()
-            self.btn_play.setFixedSize(40, 40)
-            self.btn_play.setStyleSheet("""
-                QPushButton {
-                    background: rgba(255, 255, 255, 0.06);
-                    border: 1px solid rgba(255, 255, 255, 0.10);
-                    border-radius: 20px;
-                }
-                QPushButton:hover {
-                    background: rgba(255, 255, 255, 0.10);
-                    border-color: rgba(255, 255, 255, 0.20);
-                }
-                QPushButton:pressed {
-                    background: rgba(255, 255, 255, 0.16);
-                }
-            """)
-            self.btn_play.setIcon(
-                qta.icon('fa5s.play', color='rgba(255,255,255,0.80)')
-            )
-            self.btn_play.setIconSize(QSize(16, 16))
+            self.btn_play.setFixedSize(36, 36)
+            self.btn_play.setIcon(qta.icon('fa5s.play', color='rgba(255,255,255,0.95)'))
+            self.btn_play.setIconSize(QSize(17, 17))
 
             self.btn_next = QPushButton()
             self.btn_next.setFixedSize(32, 32)
-            self.btn_next.setIcon(
-                qta.icon('fa5s.step-forward', color='rgba(255,255,255,0.40)')
-            )
-            self.btn_next.setIconSize(QSize(14, 14))
+            self.btn_next.setIcon(qta.icon('fa5s.step-forward', color='rgba(255,255,255,0.85)'))
+            self.btn_next.setIconSize(QSize(15, 15))
 
             ctrl.addWidget(self.btn_prev)
             ctrl.addWidget(self.btn_play)
@@ -1836,47 +2828,191 @@ QProgressBar::chunk {
             self.btn_play.clicked.connect(lambda: self._press("playpause"))
             self.btn_next.clicked.connect(lambda: self._press("nexttrack"))
 
-        ctrl.addStretch()
         root.addLayout(ctrl)
+
+        # ⏱️ TIMER: refresca la info de Windows Media (título, artista, carátula...)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_from_windows_media)
+        self.timer.start(2000)
 
         self.hide()
         QTimer.singleShot(100, self.load_position)
+        QTimer.singleShot(600, self.refresh_from_windows_media)
+
+    def showEvent(self, event):
+        """Blur nativo de Windows — necesita el HWND real, por eso va acá
+        y no en __init__ (ahí la ventana todavía no existe a nivel de SO)."""
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        """Fondo liquid glass REAL: muy transparente, con un leve tinte
+        y bordes de luz. Idéntico al de FloatingSpotifyWidget para que
+        ambas tarjetas se vean consistentes."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base MUY transparente (tinte sutil, no tarjeta opaca)
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 35))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 22))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 30))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Frost casi imperceptible (solo textura, no opacidad)
+        painter.setBrush(QColor(255, 255, 255, 8))
+        painter.drawPath(path)
+
+        # 3) Sombra interior abajo, muy leve, para dar profundidad
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 25))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz (el que realmente vende el efecto "cristal")
+        painter.setPen(QPen(QColor(255, 255, 255, 90), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo (sutil)
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6,
+            rect.top() + 2,
+            rect.width() - self._radius * 1.2,
+            self._radius * 0.7
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 45))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
+
+    # ── 🎯 SEEK: adelantar/atrasar tocando o arrastrando la barra ──
+    def _prog_seek_to(self, x):
+        w = self.prog_bar.width()
+        if w <= 0 or self._dur <= 0:
+            return
+        frac = max(0.0, min(1.0, x / w))
+        new_sec = int(frac * self._dur)
+        self._pending_seek_ms = new_sec
+
+        # Reflejar de inmediato en la UI (feedback visual instantáneo)
+        self.prog_bar.setValue(int(frac * 100))
+        self.lbl_time_l.setText(f"{new_sec//60}:{new_sec%60:02d}")
+
+    def _prog_mouse_press(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._seeking = True
+            self._prog_seek_to(event.position().x())
+
+    def _prog_mouse_move(self, event):
+        if self._seeking:
+            self._prog_seek_to(event.position().x())
+
+    def _prog_mouse_release(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._seeking:
+            self._seeking = False
+            self.seek_requested.emit(self._pending_seek_ms)
+
+    # ── 🎵 CARÁTULA REAL: pide la sesión activa de Windows Media en un hilo ──
+    def refresh_from_windows_media(self):
+        def worker():
+            data = fetch_windows_media_info()
+            QMetaObject.invokeMethod(
+                self, "_on_media_info_ready",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(dict, data if data else {})
+            )
+        threading.Thread(target=worker, daemon=True).start()
+
+    @pyqtSlot(dict)
+    def _on_media_info_ready(self, data):
+        if not data:
+            self.update_info("", "", False, None)
+            return
+        self.update_info(
+            data.get("title", ""),
+            data.get("artist", ""),
+            data.get("is_playing", False),
+            data.get("thumb_bytes"),
+        )
+        self.update_timeline(data.get("position", 0), data.get("duration", 0))
 
     # ── MÉTODOS ──
     def update_timeline(self, pos, dur):
         self._dur = dur
-        self.prog_bar.setValue(int(pos / dur * 1000) if dur else 0)
-        self.lbl_time_l.setText(f"{pos//60}:{pos%60:02d}")
+        # 🔧 mientras el usuario está arrastrando, no pisamos su valor con el del servidor
+        if not self._seeking:
+            self.prog_bar.setValue(int(pos / dur * 100) if dur else 0)
+            self.lbl_time_l.setText(f"{pos//60}:{pos%60:02d}")
         self.lbl_time_r.setText(f"{dur//60}:{dur%60:02d}")
 
-    def _on_prog_click(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._dur > 0:
-            val = int(event.position().x() / self.prog_bar.width() * self._dur)
-            self.seek_requested.emit(val)
-
     def update_info(self, title, artist, is_playing, thumb):
+        """thumb: bytes crudos de imagen (PNG/JPEG) o None."""
         if not title:
             self.lbl_track.setText("Not Playing")
             self.lbl_artist.setText("Windows Media")
-            self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
             self._is_playing = False
+            self._current_thumb_hash = None
+            if HAS_QTA:
+                self.lbl_art.setPixmap(
+                    qta.icon('fa5b.youtube', color='rgba(255,255,255,0.75)').pixmap(20, 20)
+                )
+                self.lbl_art.setStyleSheet("""
+                background: rgba(255,255,255,0.10);
+                border-radius: 10px;
+                """)
+            if self.isVisible() and hasattr(self.window(), "animate_hide_widget"):
+                self.window().animate_hide_widget(self)
             return
 
-        self._is_playing = is_playing
-        self.lbl_track.setText(title[:30] + ("…" if len(title) > 30 else ""))
-        self.lbl_artist.setText(artist[:30] + ("…" if len(artist) > 30 else ""))
+        if not self.isVisible() and hasattr(self.window(), "animate_show_widget"):
+            self.window().animate_show_widget(self)
 
-        if is_playing:
-            self.dot.setStyleSheet("font-size:8px; color:rgba(80, 220, 120, 0.70);")
-        else:
-            self.dot.setStyleSheet("font-size:8px; color:rgba(255,255,255,0.15);")
+        self._is_playing = is_playing
+        self.lbl_track.setText(title[:28] + ("…" if len(title) > 28 else ""))
+        self.lbl_artist.setText(artist[:30] + ("…" if len(artist) > 30 else ""))
 
         if HAS_QTA:
             icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
-            self.btn_play.setIcon(
-                qta.icon(icon_name, color='rgba(255,255,255,0.80)')
-            )
-            self.btn_play.setIconSize(QSize(16, 16))
+            self.btn_play.setIcon(qta.icon(icon_name, color='rgba(255,255,255,0.95)'))
+
+        if thumb:
+            thumb_hash = hash(thumb)
+            if thumb_hash != self._current_thumb_hash:
+                self._current_thumb_hash = thumb_hash
+                try:
+                    pix = QPixmap()
+                    pix.loadFromData(thumb)
+                    if not pix.isNull():
+                        pix = pix.scaled(
+                            44, 44,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        self.lbl_art.setPixmap(pix)
+                        self.lbl_art.setStyleSheet("border-radius:10px;")
+                except Exception as e:
+                    print(f"[MediaWidget] Error pintando carátula: {e}")
 
     def _press(self, key):
         try:
@@ -1921,6 +3057,7 @@ QProgressBar::chunk {
             self.drag_position = None
         super().mouseReleaseEvent(event)
 
+
 class PillChatBar(QWidget):
     submitted = pyqtSignal(str)
 
@@ -1929,19 +3066,11 @@ class PillChatBar(QWidget):
         self.setObjectName("PillChatBar")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedHeight(52)  # Un poco más compacto
-        
-        # ─── ESTILO LIQUID GLASS CIRCULAR ───
+        self._radius = 26  # 💎 mitad de la altura -> píldora perfecta
+        self._glow_active = False  # 🔧 controla el color del borde en paintEvent
+
+        # ─── Solo estilos de contenido interno (el fondo lo pinta paintEvent) ───
         self.setStyleSheet("""
-            QWidget#PillChatBar {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255, 255, 255, 0.10),
-                    stop:0.5 rgba(255, 255, 255, 0.05),
-                    stop:1 rgba(255, 255, 255, 0.02)
-                );
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 30px;
-            }
             QLineEdit {
                 background: transparent;
                 border: none;
@@ -1990,7 +3119,7 @@ class PillChatBar(QWidget):
         
         # Layout principal
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 4, 6, 4)
+        layout.setContentsMargins(20, 4, 8, 4)  # 🔧 un poco más de margen izquierdo para la píldora
         layout.setSpacing(8)
         
         # ─── INPUT ───
@@ -2032,20 +3161,77 @@ class PillChatBar(QWidget):
         self._glow_state = 0
         
         self.hide()
+
+    def paintEvent(self, event):
+        """Dibuja el fondo liquid glass en forma de píldora: translúcido
+        de verdad (baja opacidad) + capa de frost + reflejo curvo arriba + borde con glow."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base translúcida (baja opacidad -> se ve lo de atrás)
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        base_gradient.setColorAt(0.5, QColor(255, 255, 255, 20))
+        base_gradient.setColorAt(1.0, QColor(0, 0, 0, 35))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Capa "frost" (blanco muy tenue, uniforme) para simular esmerilado
+        painter.setBrush(QColor(255, 255, 255, 18))
+        painter.drawPath(path)
+
+        # 3) Sombra interior sutil abajo (da profundidad, sigue siendo transparente)
+        bottom_gradient = QLinearGradient(0, self.height() * 0.55, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 30))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz (filo del cristal) -> cambia de color si el glow está activo
+        if self._glow_active:
+            border_color = QColor(168, 85, 247, 130)  # morado pulsante
+        else:
+            border_color = QColor(255, 255, 255, 90)  # blanco normal
+
+        painter.setPen(QPen(border_color, 1.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo (la parte más brillante del cristal)
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.4,
+            rect.top() + 2,
+            rect.width() - self._radius * 0.8,
+            self._radius * 0.55
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 50))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
     
     def _update_glow(self):
-        """Efecto de brillo pulsante en el borde."""
+        """Efecto de brillo pulsante en el borde (ahora vía paintEvent, no vía QSS)."""
         self._glow_state = (self._glow_state + 1) % 4
         if self._glow_state == 0:
-            self.setStyleSheet(self.styleSheet().replace(
-                'border: 1px solid rgba(255, 255, 255, 0.12);',
-                'border: 1px solid rgba(168, 85, 247, 0.25);'
-            ))
+            self._glow_active = True
         elif self._glow_state == 2:
-            self.setStyleSheet(self.styleSheet().replace(
-                'border: 1px solid rgba(168, 85, 247, 0.25);',
-                'border: 1px solid rgba(255, 255, 255, 0.12);'
-            ))
+            self._glow_active = False
+        self.update()  # 🔧 fuerza el repintado con el nuevo color de borde
 
     def _submit(self):
         text = self.inp.text().strip()
@@ -2104,19 +3290,10 @@ class HUDCalendarWidget(QWidget):
         self.setObjectName("CalendarPop")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(260, 230)  # Un poco más grande para mejor legibilidad
-        
-        # ─── ESTILO LIQUID GLASS MEJORADO ───
+        self._radius = 30  # 💎 tarjeta redondeada (no píldora, porque el widget es casi cuadrado)
+
+        # ─── Solo estilos de contenido interno (el fondo lo pinta paintEvent) ───
         self.setStyleSheet("""
-            QWidget#CalendarPop {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(20, 18, 30, 0.92),
-                    stop:0.5 rgba(16, 14, 24, 0.88),
-                    stop:1 rgba(12, 10, 20, 0.92)
-                );
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 20px;
-            }
             QLabel {
                 background: transparent;
                 border: none;
@@ -2124,7 +3301,7 @@ class HUDCalendarWidget(QWidget):
                 font-family: 'Segoe UI', 'Inter', sans-serif;
             }
         """)
-        
+
         # ─── SOMBRA LIQUID GLASS ───
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(50)
@@ -2229,6 +3406,63 @@ class HUDCalendarWidget(QWidget):
         self._update_calendar()
         
         self.hide()
+
+    def paintEvent(self, event):
+        """Dibuja el fondo liquid glass en forma de tarjeta redondeada: translúcido
+        de verdad (baja opacidad) + capa de frost + reflejo curvo arriba."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base translúcida (baja opacidad -> se ve lo de atrás)
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        base_gradient.setColorAt(0.5, QColor(255, 255, 255, 20))
+        base_gradient.setColorAt(1.0, QColor(0, 0, 0, 35))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Capa "frost" (blanco muy tenue, uniforme) para simular esmerilado
+        painter.setBrush(QColor(255, 255, 255, 18))
+        painter.drawPath(path)
+
+        # 3) Sombra interior sutil abajo (da profundidad, sigue siendo transparente)
+        bottom_gradient = QLinearGradient(0, self.height() * 0.55, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 30))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz (filo del cristal)
+        painter.setPen(QPen(QColor(255, 255, 255, 90), 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo (la parte más brillante del cristal)
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.5,
+            rect.top() + 3,
+            rect.width() - self._radius,
+            self._radius * 0.9
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 50))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
     
     def _update_calendar(self):
         """Actualiza el calendario con el mes actual."""
@@ -2415,6 +3649,15 @@ class TodoWidget(QWidget):
             item.setCheckState(Qt.CheckState.Unchecked)
             self.lst_todo.addItem(item)
             self.txt_task.clear()
+            play_sound("click")
+
+    def __post_init__(self):
+        self.lst_todo.itemChanged.connect(self._on_task_toggled)
+
+    def _on_task_toggled(self, item):
+        if item.checkState() == Qt.CheckState.Checked:
+            play_sound("notification")  # ✅ Al completar tarea
+
 
     def update_style(self):
         self.setStyleSheet(f"""
@@ -2471,41 +3714,115 @@ class NotesWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("NotesWidget")
-        self._drag_offset = None  # <--- AGREGAR ESTO
-        self.update_style()
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # 💎 fondo real transparente
+        self._drag_offset = None
+        self._radius = 20  # 💎 mismo radio que tenías en el QSS
+
+        # 💎 Solo estilos de contenido interno (el fondo lo pinta paintEvent)
+        self.setStyleSheet("""
+        QLabel { background: transparent; border: none; }
+        """)
+
+        apply_glass_shadow(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 10, 15, 10)
-        
+
         header = QHBoxLayout()
         lbl_icon = QLabel()
         if HAS_QTA:
             lbl_icon.setPixmap(qta.icon('fa5s.sticky-note', color=C_PRI).pixmap(18, 18))
         header.addWidget(lbl_icon)
-        
+
         self.lbl_title = QLabel("PAD NOTES")
+        self.lbl_title.setStyleSheet(
+            f"font-weight: bold; font-size: 11px; letter-spacing: 2px; "
+            f"color: {C_PRI}; border: none; background: transparent;"
+        )
         header.addWidget(self.lbl_title)
         header.addStretch()
         layout.addLayout(header)
-        
+
         self.txt_notes = QTextEdit()
         self.txt_notes.setPlaceholderText("Write details...")
+        self.txt_notes.setStyleSheet("""
+        QTextEdit {
+            border: none;
+            background: rgba(255,255,255,0.06);
+            border-radius: 14px;
+            padding: 6px;
+            color: white;
+        }
+        """)
         layout.addWidget(self.txt_notes)
 
-    def update_style(self):
-        self.setStyleSheet(f"""
-            QWidget#NotesWidget {{
-                background: {C_PANEL};
-                border-top: 1.5px solid rgba(255, 255, 255, 0.25);
-                border-left: 1.5px solid rgba(255, 255, 255, 0.15);
-                border: 1.5px solid {C_BORDER};
-                border-radius: 20px;
-            }}
-        """)
-        if hasattr(self, "lbl_title"):
-            self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-            self.txt_notes.setStyleSheet(f"QTextEdit {{ border: none; background: rgba(0,0,0,0.2); border-radius: 20px; padding: 6px; color: white; }}")
-        apply_glass_shadow(self)
-    
+    def showEvent(self, event):
+        """Blur nativo de Windows: hay que aplicarlo aquí porque necesita
+        el HWND real, que solo existe una vez que la ventana ya se mostró."""
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        """Fondo liquid glass: tinte sutil + frost + sombra interior +
+        borde de luz + reflejo superior curvo, todo dentro de un
+        rounded-rect (evita las esquinas cuadradas del QSS anterior)."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base transparente con tinte
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 30))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 18))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 26))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Frost sutil
+        painter.setBrush(QColor(255, 255, 255, 8))
+        painter.drawPath(path)
+
+        # 3) Sombra interior abajo
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 25))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6,
+            rect.top() + 2,
+            rect.width() - self._radius * 1.2,
+            self._radius * 0.7
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
+
     # ---------------- DRAG SYSTEM ----------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -2546,20 +3863,34 @@ class FilesPanel(QWidget):
         super().__init__(parent)
         self.ui = ui
         self.setObjectName("FilesPanel")
-        self._drag_offset = None  # <--- AGREGAR ESTO
-        self.update_style()
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # 💎 fondo real transparente
+        self._drag_offset = None
+        self._radius = 20  # 💎 mismo radio que NotesWidget
+
+        # 💎 Solo estilos de contenido interno (el fondo lo pinta paintEvent)
+        self.setStyleSheet("""
+        QLabel { background: transparent; border: none; }
+        QPushButton { background: transparent; border: none; }
+        """)
+
+        apply_glass_shadow(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 10, 15, 10)
-        
+
         header = QHBoxLayout()
         lbl_icon = QLabel()
         if HAS_QTA:
             lbl_icon.setPixmap(qta.icon('fa5s.keyboard', color=C_PRI).pixmap(18, 18))
         header.addWidget(lbl_icon)
-        
+
         self.lbl_title = QLabel("MACROS GUARDADOS")
+        self.lbl_title.setStyleSheet(
+            f"font-weight: bold; font-size: 11px; letter-spacing: 2px; "
+            f"color: {C_PRI}; border: none; background: transparent;"
+        )
         header.addWidget(self.lbl_title)
-        
+
         self.btn_open_folder = QPushButton()
         if HAS_QTA:
             self.btn_open_folder.setIcon(qta.icon('fa5s.folder-open', color=C_PRI))
@@ -2577,17 +3908,104 @@ class FilesPanel(QWidget):
         self.btn_refresh.setStyleSheet("background: transparent; border: none;")
         self.btn_refresh.clicked.connect(self.load_macros)
         header.addWidget(self.btn_refresh)
-        
+
         header.addStretch()
         layout.addLayout(header)
-        
+
         self.list_macros = QListWidget()
-        self.list_macros.setStyleSheet(f"background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; color: {C_TEXT}; font-size: 11px;")
+        self.list_macros.setStyleSheet(f"""
+            QListWidget {{
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 14px;
+                color: {C_TEXT};
+                font-size: 11px;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                padding: 6px 10px;
+                border-radius: 8px;
+            }}
+            QListWidget::item:selected {{
+                background: rgba(245, 158, 11, 0.15);
+                border: 1px solid rgba(245, 158, 11, 0.2);
+            }}
+            QListWidget::item:hover {{
+                background: rgba(255,255,255,0.05);
+            }}
+        """)
         self.list_macros.itemDoubleClicked.connect(self.execute_macro)
         layout.addWidget(self.list_macros)
-        
+
         self.load_macros()
-        
+
+    def showEvent(self, event):
+        """Blur nativo de Windows: hay que aplicarlo aquí porque necesita
+        el HWND real, que solo existe una vez que la ventana ya se mostró."""
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        """Fondo liquid glass: tinte sutil + frost + sombra interior +
+        borde de luz + reflejo superior curvo, todo dentro de un
+        rounded-rect (evita las esquinas cuadradas del QSS anterior)."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base transparente con tinte
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 30))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 18))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 26))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Frost sutil
+        painter.setBrush(QColor(255, 255, 255, 8))
+        painter.drawPath(path)
+
+        # 3) Sombra interior abajo
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 25))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6,
+            rect.top() + 2,
+            rect.width() - self._radius * 1.2,
+            self._radius * 0.7
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
+
     def load_macros(self):
         self.list_macros.clear()
         try:
@@ -2613,6 +4031,7 @@ class FilesPanel(QWidget):
             import threading
             from actions.macros import macros
             threading.Thread(target=macros, args=({"action": "execute_macro", "macro_name": macro_name}, self.ui), daemon=True).start()
+            
 
     def open_macros_folder(self):
         from memory.config_manager import BASE_DIR
@@ -2620,22 +4039,7 @@ class FilesPanel(QWidget):
         folder = BASE_DIR / "config"
         if os.name == 'nt':
             subprocess.Popen(f'explorer "{folder}"')
-        
-    def update_style(self):
-        self.setStyleSheet(f"""
-            QWidget#FilesPanel {{
-                background: {C_PANEL};
-                border-top: 1.5px solid rgba(255, 255, 255, 0.25);
-                border-left: 1.5px solid rgba(255, 255, 255, 0.15);
-                border: 1.5px solid {C_BORDER};
-                border-radius: 20px;
-            }}
-        """)
-        if hasattr(self, "lbl_title"):
-            self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-            self.list_macros.setStyleSheet(f"background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; color: {C_TEXT}; font-size: 11px;")
-        apply_glass_shadow(self)
-    
+
     # ---------------- DRAG SYSTEM ----------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -2673,106 +4077,290 @@ class FilesPanel(QWidget):
 
 
 
-class WeatherWidget(QWidget):
+class StarOverlayWidget(QWidget):
+    def __init__(self, parent=None, variant: str = "estrellas"):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.hide()
 
+        self.variant = variant if variant in STAR_VARIANTS else "estrellas"
+        self.stars = []
+        self.max_stars = 45
+        self._init_stars()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_stars)
+
+    def set_variant(self, variant: str):
+        """Cambia la variante activa y reinicia las partículas."""
+        if variant not in STAR_VARIANTS:
+            variant = "estrellas"
+        if variant == self.variant:
+            return
+        self.variant = variant
+        self._init_stars()
+        self.update()
+
+    def _init_stars(self):
+        import random
+        cfg = STAR_VARIANTS[self.variant]
+        motion = cfg["motion"]
+        is_square = cfg["shape"] == "square"
+        self.stars = []
+        for _ in range(self.max_stars):
+            star = {
+                'x': random.uniform(0, 1920),
+                'y': random.uniform(0, 1080),
+                'size': random.uniform(3.0, 7.0) if is_square else random.uniform(1.8, 4.5),
+                'opacity': random.uniform(0.1, 0.9),
+                'pulse': random.uniform(0.015, 0.04),
+                'pulse_dir': random.choice([1, -1]),
+                'color': random.choice(cfg["colors"]),
+                'angle': random.uniform(0, 360),
+            }
+            if motion == "up":
+                star['speed_y'] = random.uniform(-0.5, -2.0)
+                star['speed_x'] = random.uniform(-0.4, 0.4)
+            elif motion == "down":
+                star['speed_y'] = random.uniform(0.4, 1.6)
+                star['speed_x'] = random.uniform(-0.3, 0.3)
+                star['spin'] = random.uniform(-3.0, 3.0)
+            elif motion == "wander":
+                star['speed_y'] = random.uniform(-0.3, 0.3)
+                star['speed_x'] = random.uniform(-0.3, 0.3)
+                star['wander_timer'] = random.uniform(0, 60)
+            self.stars.append(star)
+
+    def update_stars(self):
+        if not self.isVisible():
+            return
+        import random
+        w = self.width()
+        h = self.height()
+        motion = STAR_VARIANTS[self.variant]["motion"]
+
+        for star in self.stars:
+            if motion == "wander":
+                star['wander_timer'] -= 1
+                if star['wander_timer'] <= 0:
+                    star['speed_x'] = random.uniform(-0.5, 0.5)
+                    star['speed_y'] = random.uniform(-0.5, 0.5)
+                    star['wander_timer'] = random.uniform(40, 120)
+
+            star['x'] += star['speed_x']
+            star['y'] += star['speed_y']
+            if 'spin' in star:
+                star['angle'] = (star['angle'] + star['spin']) % 360
+
+            star['opacity'] += star['pulse'] * star['pulse_dir']
+            if star['opacity'] > 1.0:
+                star['opacity'] = 1.0
+                star['pulse_dir'] = -1
+            elif star['opacity'] < 0.1:
+                star['opacity'] = 0.1
+                star['pulse_dir'] = 1
+
+            if motion == "up" and (star['y'] < -15 or star['x'] < -15 or star['x'] > w + 15):
+                star['y'] = h + 15
+                star['x'] = random.uniform(0, w)
+            elif motion == "down" and (star['y'] > h + 15 or star['x'] < -15 or star['x'] > w + 15):
+                star['y'] = -15
+                star['x'] = random.uniform(0, w)
+            elif motion == "wander":
+                if star['x'] < -15: star['x'] = w + 15
+                if star['x'] > w + 15: star['x'] = -15
+                if star['y'] < -15: star['y'] = h + 15
+                if star['y'] > h + 15: star['y'] = -15
+
+        self.update()
+
+    def showEvent(self, event):
+        if hasattr(self, 'timer') and self.timer:
+            self.timer.start(33)
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        if hasattr(self, 'timer') and self.timer:
+            self.timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        shape = STAR_VARIANTS[self.variant]["shape"]
+
+        for star in self.stars:
+            r, g, b = star['color']
+            base_opacity = int(star['opacity'] * 255)
+            s = star['size']
+
+            if shape == "glow":
+                glow_opacity = int(base_opacity * 0.35)
+                painter.setBrush(QColor(r, g, b, int(glow_opacity * 0.3)))
+                painter.drawEllipse(int(star['x'] - s * 1.5), int(star['y'] - s * 1.5), int(s * 4), int(s * 4))
+                painter.setBrush(QColor(r, g, b, glow_opacity))
+                painter.drawEllipse(int(star['x'] - s * 0.5), int(star['y'] - s * 0.5), int(s * 2), int(s * 2))
+                painter.setBrush(QColor(r, g, b, base_opacity))
+                painter.drawEllipse(int(star['x']), int(star['y']), int(s), int(s))
+
+            elif shape == "soft":
+                painter.setBrush(QColor(r, g, b, int(base_opacity * 0.4)))
+                painter.drawEllipse(int(star['x'] - s), int(star['y'] - s), int(s * 3), int(s * 3))
+                painter.setBrush(QColor(r, g, b, base_opacity))
+                painter.drawEllipse(int(star['x']), int(star['y']), int(s), int(s))
+
+            elif shape == "ring":
+                pen = QPen(QColor(r, g, b, base_opacity))
+                pen.setWidthF(1.2)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(int(star['x']), int(star['y']), int(s * 2), int(s * 2))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 255, int(base_opacity * 0.5)))
+                painter.drawEllipse(int(star['x'] + s * 0.4), int(star['y'] + s * 0.3), int(s * 0.5), int(s * 0.5))
+
+            elif shape == "square":
+                painter.save()
+                painter.translate(star['x'], star['y'])
+                painter.rotate(star.get('angle', 0))
+                painter.setBrush(QColor(r, g, b, base_opacity))
+                painter.drawRect(int(-s / 2), int(-s / 2), int(s), int(s))
+                painter.restore()
+
+class WeatherWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-
         self.setObjectName("WeatherWidget")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # 💎 fondo real transparente
         self.setFixedSize(250, 130)
+        self._drag_offset = None
+        self._radius = 18  # 💎 mismo radio que tenía antes
 
-        self.setStyleSheet(f"""
-        QWidget#WeatherWidget {{
-            background: rgba(18,18,22,0.78);
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 18px;
-        }}
-
-        QLabel {{
+        # 💎 Solo estilos de contenido interno (el fondo lo pinta paintEvent)
+        self.setStyleSheet("""
+        QLabel {
             background: transparent;
             border: none;
-            color: {C_TEXT};
-        }}
+        }
         """)
 
-        apply_glass_shadow(
-            self,
-            blur_radius=18,
-            y_offset=4,
-            alpha=120
-        )
+        apply_glass_shadow(self, blur_radius=18, y_offset=4, alpha=120)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
 
-        self.lbl_city = QLabel("🌤 Medellín")
-        self.lbl_city.setStyleSheet("""
-            font-size:12px;
-            font-weight:700;
-            color:white;
-        """)
+        self.lbl_city = QLabel("🌐 Detectando…")
+        self.lbl_city.setStyleSheet("font-size:12px; font-weight:700; color:white;")
 
         self.lbl_temp = QLabel("--°C")
-        self.lbl_temp.setStyleSheet(f"""
-            font-size:28px;
-            font-weight:800;
-            color:{C_PRI};
-        """)
+        self.lbl_temp.setStyleSheet(f"font-size:28px; font-weight:800; color:{C_PRI};")
 
         self.lbl_desc = QLabel("Cargando clima...")
-        self.lbl_desc.setStyleSheet("""
-            font-size:10px;
-            color:rgba(220,220,230,0.75);
-        """)
+        self.lbl_desc.setStyleSheet("font-size:10px; color:rgba(220,220,230,0.75);")
 
         self.lbl_extra = QLabel("--")
-        self.lbl_extra.setStyleSheet("""
-            font-size:9px;
-            color:rgba(220,220,230,0.60);
-        """)
+        self.lbl_extra.setStyleSheet("font-size:9px; color:rgba(220,220,230,0.60);")
 
         layout.addWidget(self.lbl_city)
         layout.addWidget(self.lbl_temp)
         layout.addWidget(self.lbl_desc)
         layout.addWidget(self.lbl_extra)
 
-        # Timer principal (actualización cada 30 min)
+        # Coordenadas por defecto (fallback si falla la detección)
+        self._lat = 6.2442
+        self._lon = -75.5812
+        self._city_name = "Medellín"
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_weather)
-        self.timer.start(1800000)
+        self.timer.start(1800000)  # cada 30 min
 
-        # Primera actualización (delay 1 segundo)
-        QTimer.singleShot(1000, self.update_weather)
+        # 1) Primero detecta ubicación, 2) luego pide el clima
+        QTimer.singleShot(500, self.detect_location_and_update)
 
-        # Drag state
-        self._drag_offset = None
+    def showEvent(self, event):
+        """Blur nativo de Windows: hay que aplicarlo aquí porque necesita
+        el HWND real, que solo existe una vez que la ventana ya se mostró."""
+        super().showEvent(event)
+        try:
+            apply_acrylic_blur(int(self.winId()), color=(15, 15, 25, 60))
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        """Fondo liquid glass: tinte sutil + frost + sombra interior +
+        borde de luz + reflejo superior curvo, todo dentro de un
+        rounded-rect (evita las esquinas cuadradas del QSS anterior)."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+
+        # 1) Base transparente con tinte
+        base_gradient = QLinearGradient(0, 0, 0, self.height())
+        base_gradient.setColorAt(0.0, QColor(255, 255, 255, 30))
+        base_gradient.setColorAt(0.5, QColor(200, 210, 230, 18))
+        base_gradient.setColorAt(1.0, QColor(160, 170, 200, 26))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_gradient)
+        painter.drawPath(path)
+
+        # 2) Frost sutil
+        painter.setBrush(QColor(255, 255, 255, 8))
+        painter.drawPath(path)
+
+        # 3) Sombra interior abajo
+        bottom_gradient = QLinearGradient(0, self.height() * 0.6, 0, self.height())
+        bottom_gradient.setColorAt(0.0, QColor(0, 0, 0, 0))
+        bottom_gradient.setColorAt(1.0, QColor(0, 0, 0, 25))
+        painter.setBrush(bottom_gradient)
+        painter.drawPath(path)
+
+        # 4) Borde de luz
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+        # 5) Reflejo superior curvo
+        shine_rect = QRectF(
+            rect.left() + self._radius * 0.6,
+            rect.top() + 2,
+            rect.width() - self._radius * 1.2,
+            self._radius * 0.7
+        )
+        shine_path = QPainterPath()
+        shine_path.addRoundedRect(shine_rect, shine_rect.height() / 2, shine_rect.height() / 2)
+
+        shine_gradient = QLinearGradient(0, shine_rect.top(), 0, shine_rect.bottom())
+        shine_gradient.setColorAt(0.0, QColor(255, 255, 255, 40))
+        shine_gradient.setColorAt(1.0, QColor(255, 255, 255, 0))
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(shine_gradient)
+        painter.drawPath(shine_path)
+
+        super().paintEvent(event)
 
     # ---------------- DRAG SYSTEM ----------------
-
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = (
-                event.globalPosition().toPoint()
-                - self.frameGeometry().topLeft()
-            )
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if (
-            event.buttons() & Qt.MouseButton.LeftButton
-            and self._drag_offset is not None
-        ):
-            self.move(
-                event.globalPosition().toPoint()
-                - self._drag_offset
-            )
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
 
     def mouseReleaseEvent(self, event):
         if self._drag_offset is not None:
-            # Guardar posición al soltar
             try:
                 from memory.config_manager import load_api_keys, save_api_keys
                 cfg = load_api_keys()
@@ -2780,69 +4368,80 @@ class WeatherWidget(QWidget):
                 cfg[f"widget_pos_{w_name}_x"] = self.x()
                 cfg[f"widget_pos_{w_name}_y"] = self.y()
                 save_api_keys(cfg)
+                print(f"[{w_name}] ✅ Posición guardada: X={self.x()}, Y={self.y()}")
             except Exception as e:
-                print(f"Error saving WeatherWidget position: {e}")
+                print(f"Error saving {self.__class__.__name__} position: {e}")
             self._drag_offset = None
         super().mouseReleaseEvent(event)
 
-    # ---------------- WEATHER LOGIC ----------------
+    # ---------------- DETECCIÓN DE UBICACIÓN ----------------
+    def detect_location_and_update(self):
+        """
+        Intenta usar una ubicación guardada por el usuario (manual).
+        Si no hay, detecta la ubicación por IP automáticamente.
+        """
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys()
 
+            # Si el usuario configuró manualmente su ciudad, usar esa
+            manual_lat = cfg.get("weather_lat")
+            manual_lon = cfg.get("weather_lon")
+            manual_city = cfg.get("weather_city")
+
+            if manual_lat and manual_lon:
+                self._lat = float(manual_lat)
+                self._lon = float(manual_lon)
+                self._city_name = manual_city or "Mi ubicación"
+                self.update_weather()
+                return
+        except Exception:
+            pass
+
+        try:
+            url = "http://ip-api.com/json/?fields=status,country,city,lat,lon"
+            with urllib.request.urlopen(url, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+
+            if data.get("status") == "success":
+                self._lat = data["lat"]
+                self._lon = data["lon"]
+                self._city_name = data.get("city", "Mi ubicación")
+        except Exception as e:
+            print(f"[WeatherWidget] No se pudo detectar ubicación: {e}")
+            # Se queda con el fallback (Medellín)
+
+        self.update_weather()
+
+    # ---------------- WEATHER LOGIC ----------------
     def weather_icon(self, code: int):
-        if code == 0:
-            return "☀️"
-        if code in [1, 2]:
-            return "🌤"
-        if code == 3:
-            return "☁️"
-        if code in [45, 48]:
-            return "🌫"
-        if code in [51, 53, 55, 56, 57]:
-            return "🌦"
-        if code in [61, 63, 65]:
-            return "🌧"
-        if code in [66, 67]:
-            return "🌧"
-        if code in [71, 73, 75]:
-            return "❄️"
-        if code in [80, 81, 82]:
-            return "🌧"
-        if code in [95, 96, 99]:
-            return "⛈"
+        if code == 0: return "☀️"
+        if code in [1, 2]: return "🌤"
+        if code == 3: return "☁️"
+        if code in [45, 48]: return "🌫"
+        if code in [51, 53, 55, 56, 57]: return "🌦"
+        if code in [61, 63, 65, 66, 67, 80, 81, 82]: return "🌧"
+        if code in [71, 73, 75]: return "❄️"
+        if code in [95, 96, 99]: return "⛈"
         return "🌤"
 
     def weather_text(self, code: int):
         mapping = {
-            0: "Despejado",
-            1: "Mayormente despejado",
-            2: "Parcialmente nublado",
-            3: "Nublado",
-            45: "Neblina",
-            48: "Neblina",
-            51: "Llovizna ligera",
-            53: "Llovizna",
-            55: "Llovizna fuerte",
-            61: "Lluvia ligera",
-            63: "Lluvia",
-            65: "Lluvia intensa",
-            71: "Nieve ligera",
-            73: "Nieve",
-            75: "Nieve intensa",
-            80: "Chubascos",
-            81: "Chubascos fuertes",
-            82: "Tormenta de lluvia",
+            0: "Despejado", 1: "Mayormente despejado", 2: "Parcialmente nublado",
+            3: "Nublado", 45: "Neblina", 48: "Neblina", 51: "Llovizna ligera",
+            53: "Llovizna", 55: "Llovizna fuerte", 61: "Lluvia ligera", 63: "Lluvia",
+            65: "Lluvia intensa", 71: "Nieve ligera", 73: "Nieve", 75: "Nieve intensa",
+            80: "Chubascos", 81: "Chubascos fuertes", 82: "Tormenta de lluvia",
             95: "Tormenta eléctrica"
         }
         return mapping.get(code, "Clima desconocido")
 
     def update_weather(self):
         try:
-            lat = 6.2442
-            lon = -75.5812
-
             url = (
                 "https://api.open-meteo.com/v1/forecast"
-                f"?latitude={lat}"
-                f"&longitude={lon}"
+                f"?latitude={self._lat}"
+                f"&longitude={self._lon}"
                 "&current=temperature_2m,relative_humidity_2m,"
                 "apparent_temperature,weather_code,wind_speed_10m"
             )
@@ -2851,7 +4450,6 @@ class WeatherWidget(QWidget):
                 data = json.loads(response.read().decode("utf-8"))
 
             current = data["current"]
-
             temp = current["temperature_2m"]
             humidity = current["relative_humidity_2m"]
             feels = current["apparent_temperature"]
@@ -2860,126 +4458,59 @@ class WeatherWidget(QWidget):
 
             icon = self.weather_icon(code)
 
-            self.lbl_city.setText(f"{icon} Medellín")
+            self.lbl_city.setText(f"{icon} {self._city_name}")
             self.lbl_temp.setText(f"{round(temp)}°C")
             self.lbl_desc.setText(self.weather_text(code))
             self.lbl_extra.setText(
                 f"Sensación {round(feels)}°C   •   "
                 f"Humedad {humidity}%   •   "
                 f"Viento {round(wind)} km/h"
+                
             )
+            play_sound("success")
 
         except Exception as e:
             self.lbl_temp.setText("--°C")
             self.lbl_desc.setText("Sin conexión")
             self.lbl_extra.setText(str(e)[:60])
+            play_sound("error") 
 
-class SystemWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("SystemWidget")
-        self._drag_offset = None  # <--- AGREGAR ESTO
-        self.update_style()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        
-        header = QHBoxLayout()
-        lbl_icon = QLabel()
-        if HAS_QTA:
-            lbl_icon.setPixmap(qta.icon('fa5s.bolt', color=C_PRI).pixmap(18, 18))
-        header.addWidget(lbl_icon)
-        
-        self.lbl_title = QLabel("SYSTEM GAUGES")
-        header.addWidget(self.lbl_title)
-        header.addStretch()
-        layout.addLayout(header)
-        
-        self.cpu_bar = QProgressBar()
-        self.ram_bar = QProgressBar()
-        
-        self.bars = [(self.cpu_bar, "CPU Status"), (self.ram_bar, "RAM Status")]
-        for bar, label in self.bars:
-            lbl = QLabel(label)
-            lbl.setStyleSheet(f"font-size: 10px; color: {C_PRI_DIM}; border: none; background: transparent;")
-            layout.addWidget(lbl)
-            bar.setTextVisible(True)
-            layout.addWidget(bar)
-            
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_stats)
-        self.timer.start(1000)
-        self.update_stats()
-        
-    def update_stats(self):
-        try:
-            self.cpu_bar.setValue(int(psutil.cpu_percent()))
-            self.ram_bar.setValue(int(psutil.virtual_memory().percent))
-        except Exception:
-            pass
+# ═══════════════════════════════════════════════════════════════════════════
+#  STAR VARIANTS DICTIONARY - AÑADIR AQUÍ
+# ═══════════════════════════════════════════════════════════════════════════
 
-    def update_style(self):
-        self.setStyleSheet(f"""
-            QWidget#SystemWidget {{
-                background: {C_PANEL};
-                border-top: 1.5px solid rgba(255, 255, 255, 0.25);
-                border-left: 1.5px solid rgba(255, 255, 255, 0.15);
-                border: 1.5px solid {C_BORDER};
-                border-radius: 20px;
-            }}
-        """)
-        if hasattr(self, "lbl_title"):
-            self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-            for bar, label in self.bars:
-                bar.setStyleSheet(f"""
-                    QProgressBar {{
-                        border: 1px solid {C_BORDER};
-                        border-radius: 20px;
-                        text-align: center;
-                        background: transparent;
-                        color: white;
-                        height: 14px;
-                    }}
-                    QProgressBar::chunk {{
-                        background-color: {C_PRI};
-                        border-radius: 20px;
-                    }}
-                """)
-        apply_glass_shadow(self)
-    
-    # ---------------- DRAG SYSTEM ----------------
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = (
-                event.globalPosition().toPoint()
-                - self.frameGeometry().topLeft()
-            )
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if (
-            event.buttons() & Qt.MouseButton.LeftButton
-            and self._drag_offset is not None
-        ):
-            self.move(
-                event.globalPosition().toPoint()
-                - self._drag_offset
-            )
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        if self._drag_offset is not None:
-            try:
-                from memory.config_manager import load_api_keys, save_api_keys
-                cfg = load_api_keys()
-                w_name = self.__class__.__name__
-                cfg[f"widget_pos_{w_name}_x"] = self.x()
-                cfg[f"widget_pos_{w_name}_y"] = self.y()
-                save_api_keys(cfg)
-                print(f"[{w_name}] ✅ Posición guardada: X={self.x()}, Y={self.y()}")
-            except Exception as e:
-                print(f"Error saving {self.__class__.__name__} position: {e}")
-            self._drag_offset = None
-        super().mouseReleaseEvent(event)
+STAR_VARIANTS = {
+    "estrellas": {
+        "label": "✨ Estrellas Clásicas",
+        "colors": [(255, 215, 0), (0, 255, 255), (255, 105, 180), (180, 200, 255), (255, 255, 255)],
+        "motion": "up",
+        "shape": "glow",
+    },
+    "nieve": {
+        "label": "❄️ Nieve",
+        "colors": [(255, 255, 255), (225, 235, 255), (200, 220, 255)],
+        "motion": "down",
+        "shape": "soft",
+    },
+    "burbujas": {
+        "label": "🫧 Burbujas",
+        "colors": [(150, 220, 255), (200, 240, 255), (255, 255, 255)],
+        "motion": "up",
+        "shape": "ring",
+    },
+    "luciernagas": {
+        "label": "🌟 Luciérnagas",
+        "colors": [(180, 255, 120), (255, 240, 150), (255, 200, 100)],
+        "motion": "wander",
+        "shape": "glow",
+    },
+    "confeti": {
+        "label": "🎉 Confeti",
+        "colors": [(255, 90, 90), (90, 200, 255), (255, 215, 0), (190, 120, 255), (120, 255, 170)],
+        "motion": "down",
+        "shape": "square",
+    },
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Dialogs: NexusMessageBox, LogsDialog, NexusColorPicker
@@ -3424,7 +4955,635 @@ class StyledSideNav(QWidget):
             self.tab_changed.emit(index)
 
 
+# ─── SMART HOME WIDGET ──────────────────────────────────────────────────────
+class SmartHomeWidget(QWidget):
+    """Widget flotante para controlar dispositivos inteligentes."""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SmartHomeWidget")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(390, 470)
+        self._drag_offset = None
+
+        # ─── ESTILO LIQUID GLASS PREMIUM ────────────
+        self.setStyleSheet("""
+            QWidget#SmartHomeWidget {
+                background: rgba(18, 18, 22, 0.75);
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                border-radius: 24px;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+                color: rgba(255, 255, 255, 0.85);
+                font-family: 'Segoe UI', 'Inter', sans-serif;
+            }
+            QPushButton {
+                background: rgba(255, 255, 255, 0.05);
+                color: rgba(255, 255, 255, 0.78);
+                border: 1px solid rgba(255, 255, 255, 0.09);
+                border-radius: 12px;
+                font-weight: 700;
+                font-size: 11px;
+                letter-spacing: 0.5px;
+                padding: 8px 14px;
+            }
+            QPushButton:hover {
+                background: rgba(168, 85, 247, 0.10);
+                color: rgba(255, 255, 255, 0.95);
+                border-color: rgba(168, 85, 247, 0.30);
+            }
+            QPushButton:pressed {
+                background: rgba(168, 85, 247, 0.18);
+            }
+            QPushButton#btn_on {
+                background: rgba(16, 220, 140, 0.10);
+                border-color: rgba(16, 220, 140, 0.28);
+                color: rgba(60, 240, 170, 0.95);
+            }
+            QPushButton#btn_on:hover {
+                background: rgba(16, 220, 140, 0.20);
+                border-color: rgba(16, 220, 140, 0.45);
+            }
+            QPushButton#btn_off {
+                background: rgba(255, 69, 58, 0.10);
+                border-color: rgba(255, 69, 58, 0.28);
+                color: rgba(255, 110, 100, 0.95);
+            }
+            QPushButton#btn_off:hover {
+                background: rgba(255, 69, 58, 0.20);
+                border-color: rgba(255, 69, 58, 0.45);
+            }
+            QPushButton#btn_toggle {
+                background: rgba(251, 191, 36, 0.10);
+                border-color: rgba(251, 191, 36, 0.28);
+                color: rgba(251, 191, 36, 0.95);
+            }
+            QPushButton#btn_toggle:hover {
+                background: rgba(251, 191, 36, 0.20);
+                border-color: rgba(251, 191, 36, 0.45);
+            }
+            QPushButton#btn_close {
+                background: rgba(255, 69, 58, 0.08);
+                color: rgba(255, 110, 100, 0.55);
+                border: 1px solid rgba(255, 69, 58, 0.16);
+                border-radius: 15px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton#btn_close:hover {
+                background: rgba(255, 69, 58, 0.18);
+                color: rgba(255, 110, 100, 0.95);
+                border-color: rgba(255, 69, 58, 0.35);
+            }
+            QListWidget {
+                background: rgba(0, 0, 0, 0.32);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 14px;
+                color: rgba(255, 255, 255, 0.85);
+                padding: 6px;
+                font-weight: 600;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                padding: 9px 10px;
+                border-radius: 8px;
+            }
+            QListWidget::item:selected {
+                background: rgba(168, 85, 247, 0.18);
+                border: 1px solid rgba(168, 85, 247, 0.30);
+                color: rgba(255, 255, 255, 0.95);
+            }
+            QListWidget::item:hover {
+                background: rgba(255, 255, 255, 0.05);
+            }
+            QProgressBar {
+                background: rgba(255, 255, 255, 0.05);
+                border: none;
+                border-radius: 4px;
+                height: 4px;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(168, 85, 247, 0.85),
+                    stop:1 rgba(251, 191, 36, 0.85)
+                );
+                border-radius: 4px;
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: rgba(255, 255, 255, 0.02);
+                width: 4px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.12);
+                min-height: 30px;
+                border-radius: 2px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        # ─── SOMBRA GLASS ──────────────────────────────────────────────────
+        apply_glass_shadow(self, blur_radius=40, y_offset=10, alpha=180)
+
+        # ─── LAYOUT ──────────────────────────────────────────────────────
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(14)
+
+        # ─── HEADER ──────────────────────────────────────────────────────
+        header = QHBoxLayout()
+        header.setSpacing(10)
+
+        self.lbl_icon = QLabel()
+        if HAS_QTA:
+            self.lbl_icon.setPixmap(qta.icon('fa5s.home', color='#fbbf24').pixmap(20, 20))
+        header.addWidget(self.lbl_icon)
+
+        self.lbl_title = QLabel("SMART HOME")
+        self.lbl_title.setStyleSheet("""
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 3px;
+            color: rgba(255, 255, 255, 0.92);
+        """)
+        header.addWidget(self.lbl_title)
+        header.addStretch()
+
+        self.btn_close = QPushButton()
+        self.btn_close.setObjectName("btn_close")
+        self.btn_close.setFixedSize(30, 30)
+        if HAS_QTA:
+            self.btn_close.setIcon(qta.icon('fa5s.times', color='#ff6e64'))
+        else:
+            self.btn_close.setText("×")
+        self.btn_close.clicked.connect(self.hide)
+        header.addWidget(self.btn_close)
+
+        layout.addLayout(header)
+
+        # ─── BOTONES DE ACCIÓN RÁPIDA ──────────────────────────────────
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        self.btn_scan = QPushButton("  ESCANEAR")
+        self.btn_scan.setFixedHeight(38)
+        if HAS_QTA:
+            self.btn_scan.setIcon(qta.icon('fa5s.search', color='#c9a8f7'))
+        self.btn_scan.clicked.connect(self._scan_devices)
+        action_row.addWidget(self.btn_scan)
+
+        self.btn_refresh = QPushButton("  ACTUALIZAR")
+        self.btn_refresh.setFixedHeight(38)
+        if HAS_QTA:
+            self.btn_refresh.setIcon(qta.icon('fa5s.sync-alt', color='#c9a8f7'))
+        self.btn_refresh.clicked.connect(self._refresh_list)
+        action_row.addWidget(self.btn_refresh)
+
+        self.btn_setup = QPushButton("  CONFIGURAR")
+        self.btn_setup.setFixedHeight(38)
+        if HAS_QTA:
+            self.btn_setup.setIcon(qta.icon('fa5s.cog', color='#fbbf24'))
+        self.btn_setup.clicked.connect(self._open_setup)
+        action_row.addWidget(self.btn_setup)
+
+        layout.addLayout(action_row)
+
+        # ─── ESTADO ──────────────────────────────────────────────────────
+        self.lbl_status = QLabel("Cargando dispositivos...")
+        self.lbl_status.setWordWrap(True)
+        self.lbl_status.setStyleSheet("""
+            color: rgba(255,255,255,0.45);
+            font-size: 11px;
+            font-weight: 600;
+        """)
+        layout.addWidget(self.lbl_status)
+
+        # ─── LISTA DE DISPOSITIVOS ──────────────────────────────────────
+        self.device_list = QListWidget()
+        self.device_list.setMinimumHeight(200)
+        self.device_list.setIconSize(QSize(16, 16))
+        self.device_list.itemDoubleClicked.connect(self._on_device_double_click)
+        layout.addWidget(self.device_list)
+
+        # ─── CONTROLES DE DISPOSITIVO SELECCIONADO ──────────────────────
+        control_frame = QFrame()
+        control_frame.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.025);
+                border: 1px solid rgba(251, 191, 36, 0.10);
+                border-radius: 14px;
+            }
+        """)
+        control_layout = QHBoxLayout(control_frame)
+        control_layout.setContentsMargins(14, 10, 14, 10)
+        control_layout.setSpacing(8)
+
+        self.lbl_selected = QLabel("Selecciona un dispositivo")
+        self.lbl_selected.setStyleSheet("""
+            font-size: 11px;
+            font-weight: 700;
+            color: rgba(255,255,255,0.45);
+        """)
+        control_layout.addWidget(self.lbl_selected, 1)
+
+        self.btn_on = QPushButton("ON")
+        self.btn_on.setObjectName("btn_on")
+        self.btn_on.setFixedSize(52, 34)
+        self.btn_on.clicked.connect(lambda: self._control_device("on"))
+        control_layout.addWidget(self.btn_on)
+
+        self.btn_off = QPushButton("OFF")
+        self.btn_off.setObjectName("btn_off")
+        self.btn_off.setFixedSize(52, 34)
+        self.btn_off.clicked.connect(lambda: self._control_device("off"))
+        control_layout.addWidget(self.btn_off)
+
+        self.btn_toggle = QPushButton("TOGGLE")
+        self.btn_toggle.setObjectName("btn_toggle")
+        self.btn_toggle.setFixedSize(74, 34)
+        self.btn_toggle.clicked.connect(lambda: self._control_device("toggle"))
+        control_layout.addWidget(self.btn_toggle)
+
+        layout.addWidget(control_frame)
+
+        # ─── BARRA DE PROGRESO (para escaneos) ──────────────────────────
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(3)
+        layout.addWidget(self.progress_bar)
+
+        # ─── CARGAR DISPOSITIVOS ──────────────────────────────────────
+        self._devices = []
+        self._selected_device = None
+        self._load_devices()
+
+        self.hide()
+
+        # Cargar posición guardada
+        QTimer.singleShot(100, self._load_position)
+
+    # ─── STATUS HELPER ──────────────────────────────────────────────────
+    def _set_status(self, text: str, kind: str = "info"):
+        """Actualiza el mensaje de estado con color semántico, sin emojis."""
+        colors = {
+            "info": "rgba(255,255,255,0.45)",
+            "success": "rgba(60, 240, 170, 0.85)",
+            "warning": "rgba(251, 191, 36, 0.85)",
+            "error": "rgba(255, 110, 100, 0.85)",
+        }
+        self.lbl_status.setStyleSheet(f"""
+            color: {colors.get(kind, colors['info'])};
+            font-size: 11px;
+            font-weight: 700;
+        """)
+        self.lbl_status.setText(text)
+
+    def _load_position(self):
+        """Carga la posición guardada del widget."""
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys()
+            w_name = self.__class__.__name__
+            x = cfg.get(f"widget_pos_{w_name}_x")
+            y = cfg.get(f"widget_pos_{w_name}_y")
+            if x is not None and y is not None:
+                self.move(int(x), int(y))
+        except Exception:
+            pass
+
+    def _save_position(self):
+        """Guarda la posición actual del widget."""
+        try:
+            from memory.config_manager import load_api_keys, save_api_keys
+            cfg = load_api_keys()
+            w_name = self.__class__.__name__
+            cfg[f"widget_pos_{w_name}_x"] = self.x()
+            cfg[f"widget_pos_{w_name}_y"] = self.y()
+            save_api_keys(cfg)
+        except Exception:
+            pass
+
+    def _load_devices(self):
+        """Carga los dispositivos desde la configuración."""
+        try:
+            from actions.smart_home import load_config
+            cfg = load_config()
+
+            self._devices = []
+            self.device_list.clear()
+
+            for dev in cfg.get("devices", []):
+                self._devices.append({
+                    "name": dev.get("name", "Desconocido"),
+                    "type": "ble",
+                    "data": dev
+                })
+
+            for tv in cfg.get("tvs", []):
+                self._devices.append({
+                    "name": tv.get("name", "TV Desconocida"),
+                    "type": "tv",
+                    "data": tv
+                })
+
+            for phone in cfg.get("phones", []):
+                self._devices.append({
+                    "name": phone.get("name", "Celular Desconocido"),
+                    "type": "phone",
+                    "data": phone
+                })
+
+            ha = cfg.get("home_assistant", {})
+            if ha.get("url") and ha.get("token"):
+                self._devices.append({
+                    "name": "Home Assistant",
+                    "type": "ha",
+                    "data": ha
+                })
+
+            if not self._devices:
+                self.device_list.addItem("Sin dispositivos configurados")
+                self._set_status("Usa CONFIGURAR para añadir dispositivos", "warning")
+                return
+
+            for dev in self._devices:
+                item = QListWidgetItem(dev['name'])
+                if HAS_QTA:
+                    item.setIcon(self._get_device_qicon(dev))
+                item.setData(Qt.ItemDataRole.UserRole, dev)
+                self.device_list.addItem(item)
+
+            self._set_status(f"{len(self._devices)} dispositivos cargados", "success")
+
+        except Exception as e:
+            self._set_status(f"Error: {e}", "error")
+
+    def _get_device_qicon(self, dev: dict):
+        """Obtiene el ícono qtawesome para un tipo de dispositivo."""
+        icon_map = {
+            "ble": ('fa5s.lightbulb', '#fbbf24'),
+            "tv": ('fa5s.tv', '#c9a8f7'),
+            "phone": ('fa5s.mobile-alt', '#c9a8f7'),
+            "ha": ('fa5s.home', '#fbbf24'),
+        }
+        name, color = icon_map.get(dev.get("type"), ('fa5s.plug', 'rgba(255,255,255,0.6)'))
+        return qta.icon(name, color=color)
+
+    def _refresh_list(self):
+        """Refresca la lista de dispositivos."""
+        self._load_devices()
+
+    def _scan_devices(self):
+        """Escanea dispositivos Bluetooth."""
+        self.progress_bar.setValue(20)
+        self._set_status("Escaneando Bluetooth...", "info")
+        self.btn_scan.setEnabled(False)
+
+        def scan_thread():
+            # IMPORTANTE: importar QMetaObject/Qt/Q_ARG ANTES del try.
+            # Si se importa solo dentro del bloque try (tras la línea que
+            # puede fallar), un error temprano deja estos nombres sin
+            # definir y el except revienta con UnboundLocalError en vez
+            # de mostrar el error real.
+            from PyQt6.QtCore import QMetaObject, Qt as _Qt, Q_ARG
+            try:
+                import asyncio
+                from actions.smart_home import _ble_scan
+                found = asyncio.run(_ble_scan(timeout=8.0))
+
+                QMetaObject.invokeMethod(self, "_on_scan_finished",
+                                         _Qt.ConnectionType.QueuedConnection,
+                                         Q_ARG(list, found))
+            except Exception as e:
+                # Mensaje amigable si el problema es que no hay adaptador
+                # Bluetooth disponible en el equipo (caso muy común).
+                msg = str(e)
+                if "NO_BLUETOOTH" in msg or "No Bluetooth adapter" in msg:
+                    msg = ("No se detectó ningún adaptador Bluetooth en este equipo. "
+                           "Verifica que el Bluetooth esté activado en Windows, o conecta "
+                           "un adaptador USB Bluetooth si tu PC no tiene uno integrado.")
+                QMetaObject.invokeMethod(self, "_on_scan_error",
+                                         _Qt.ConnectionType.QueuedConnection,
+                                         Q_ARG(str, msg))
+
+        threading.Thread(target=scan_thread, daemon=True).start()
+
+    @pyqtSlot(list)
+    def _on_scan_finished(self, devices):
+        """Callback cuando el escaneo termina."""
+        self.progress_bar.setValue(100)
+        self.btn_scan.setEnabled(True)
+
+        if not devices:
+            self._set_status("No se encontraron dispositivos Bluetooth", "warning")
+            return
+
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QHBoxLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Dispositivos Bluetooth Encontrados")
+        dialog.setFixedSize(420, 320)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(18, 16, 28, 0.97),
+                    stop:1 rgba(10, 9, 18, 0.97)
+                );
+                border: 1px solid rgba(251, 191, 36, 0.14);
+                border-radius: 14px;
+            }
+            QLabel {
+                color: rgba(255,255,255,0.85);
+                font-weight: 700;
+                font-size: 12px;
+            }
+            QListWidget {
+                background: rgba(0, 0, 0, 0.32);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 10px;
+                color: rgba(255,255,255,0.85);
+                font-weight: 600;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-radius: 6px;
+            }
+            QListWidget::item:hover {
+                background: rgba(168, 85, 247, 0.10);
+            }
+            QPushButton {
+                background: rgba(168, 85, 247, 0.15);
+                color: rgba(255, 255, 255, 0.88);
+                border: 1px solid rgba(168, 85, 247, 0.30);
+                border-radius: 10px;
+                padding: 8px 18px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background: rgba(168, 85, 247, 0.28);
+                border-color: rgba(168, 85, 247, 0.5);
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+        layout.addWidget(QLabel("DISPOSITIVOS ENCONTRADOS"))
+
+        list_widget = QListWidget()
+        for dev in devices[:20]:
+            name = dev.get("name", "Desconocido")
+            address = dev.get("address", "")
+            rssi = dev.get("rssi", "")
+            list_widget.addItem(f"{name}  ·  {address}  ·  RSSI {rssi}")
+        layout.addWidget(list_widget)
+
+        btn_layout = QHBoxLayout()
+        btn_close = QPushButton("CERRAR")
+        btn_close.clicked.connect(dialog.accept)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_close)
+        layout.addLayout(btn_layout)
+
+        dialog.exec()
+        self._set_status(f"Escaneo completado: {len(devices)} dispositivos", "success")
+        QTimer.singleShot(2000, lambda: self._refresh_list())
+
+    @pyqtSlot(str)
+    def _on_scan_error(self, error):
+        """Callback cuando hay error en el escaneo."""
+        self.progress_bar.setValue(0)
+        self.btn_scan.setEnabled(True)
+        self._set_status(error, "error")
+
+    def _on_device_double_click(self, item):
+        """Cuando se hace doble clic en un dispositivo."""
+        dev = item.data(Qt.ItemDataRole.UserRole)
+        if dev:
+            self._selected_device = dev
+            self.lbl_selected.setText(dev['name'])
+            self.lbl_selected.setStyleSheet("""
+                font-size: 11px;
+                font-weight: 800;
+                color: rgba(251, 191, 36, 0.9);
+            """)
+
+    def _control_device(self, command: str):
+        """Controla el dispositivo seleccionado."""
+        if not self._selected_device:
+            self._set_status("Selecciona un dispositivo primero", "warning")
+            return
+
+        dev = self._selected_device
+        name = dev.get("name", "")
+        dev_type = dev.get("type", "")
+
+        self._set_status(f"Ejecutando {command.upper()} en {name}...", "info")
+
+        def control_thread():
+            # Mismo fix de scoping que en scan_thread: importar antes del try.
+            from PyQt6.QtCore import QMetaObject, Qt as _Qt, Q_ARG
+            try:
+                from actions.smart_home import smart_home as sh
+
+                if dev_type == "ble":
+                    result = sh({"action": command, "device": name})
+                elif dev_type == "tv":
+                    if command in ("on", "off", "toggle"):
+                        result = sh({"action": "tv_power", "device": name})
+                    else:
+                        result = f"Comando {command} no soportado para TV"
+                elif dev_type == "phone":
+                    if command == "on":
+                        result = sh({"action": "phone_screen_on", "device": name})
+                    elif command == "off":
+                        result = sh({"action": "phone_screen_off", "device": name})
+                    else:
+                        result = sh({"action": f"phone_{command}", "device": name})
+                elif dev_type == "ha":
+                    result = "Home Assistant: usa la configuración avanzada"
+                else:
+                    result = f"Tipo {dev_type} no soportado"
+
+                QMetaObject.invokeMethod(self, "_on_control_result",
+                                         _Qt.ConnectionType.QueuedConnection,
+                                         Q_ARG(str, result))
+            except Exception as e:
+                QMetaObject.invokeMethod(self, "_on_control_result",
+                                         _Qt.ConnectionType.QueuedConnection,
+                                         Q_ARG(str, f"Error: {e}"))
+
+        threading.Thread(target=control_thread, daemon=True).start()
+
+    @pyqtSlot(str)
+    def _on_control_result(self, result):
+        """Callback cuando el control termina."""
+        kind = "error" if result.lower().startswith("error") else "success"
+        self._set_status(result[:150], kind)
+        QTimer.singleShot(2000, self._refresh_list)
+
+    def _open_setup(self):
+        """Abre la configuración de Smart Home."""
+        try:
+            import subprocess
+            from memory.config_manager import BASE_DIR
+            config_path = BASE_DIR / "config" / "smart_home.json"
+
+            if config_path.exists():
+                subprocess.Popen(f'notepad "{config_path}"', shell=True)
+                self._set_status("Configuración abierta en Notepad", "info")
+            else:
+                default = {
+                    "devices": [],
+                    "tvs": [],
+                    "phones": [],
+                    "home_assistant": {"url": "", "token": ""}
+                }
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(
+                    json.dumps(default, indent=2, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+                subprocess.Popen(f'notepad "{config_path}"', shell=True)
+                self._set_status("Configuración creada y abierta", "success")
+        except Exception as e:
+            self._set_status(f"Error: {e}", "error")
+
+    # ─── DRAG SYSTEM ──────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_offset is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_offset is not None:
+            self._save_position()
+            self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def showEvent(self, event):
+        """Cuando se muestra, refrescar la lista."""
+        self._refresh_list()
+        super().showEvent(event)
 
 class DeviceSettingsDialog(QFrame):
     def __init__(self, parent=None):
@@ -3459,11 +5618,11 @@ class DeviceSettingsDialog(QFrame):
             QFrame#settingsContainer {{
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 1, y2: 1,
-                    stop: 0 rgb(22, 12, 35),
-                    stop: 0.5 rgb(12, 8, 20),
-                    stop: 1 rgb(5, 5, 10)
+                    stop: 0 rgba(20, 20, 25, 0.92),
+                    stop: 0.5 rgba(15, 15, 20, 0.92),
+                    stop: 1 rgba(10, 10, 15, 0.92)
                 );
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 28px;
             }}
         """)
@@ -3480,10 +5639,10 @@ class DeviceSettingsDialog(QFrame):
             QFrame {
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 0, y2: 1,
-                    stop: 0 rgb(30, 15, 45),
-                    stop: 1 rgb(15, 8, 25)
+                    stop: 0 rgba(40, 25, 55, 0.80),
+                    stop: 1 rgba(20, 12, 35, 0.80)
                 );
-                border-right: 1px solid rgba(168, 85, 247, 0.25);
+                border-right: 1px solid rgba(168, 85, 247, 0.20);
                 border-top-left-radius: 28px;
                 border-bottom-left-radius: 28px;
                 border-top-right-radius: 0px;
@@ -3647,6 +5806,33 @@ class DeviceSettingsDialog(QFrame):
         self.load_settings()
         self.load_macros()
         self.clean_all_emojis(self)
+        self._setup_sound_controls()
+
+    def _setup_sound_controls(self):
+        """Configura los sonidos del panel de configuración."""
+        # Sonido al abrir el panel
+        QTimer.singleShot(50, lambda: play_sound("open"))
+    
+    def showEvent(self, event):
+        """Cuando se muestra el panel, reproducir sonido."""
+        super().showEvent(event)
+        play_sound("open")
+
+    def reject(self):
+        """Cerrar el panel con sonido."""
+        play_sound("close")
+        self._cleanup()
+        self.hide()
+        if hasattr(self, "_on_close_callback") and self._on_close_callback:
+            self._on_close_callback(False)
+
+    def accept(self):
+        """Aceptar cambios y cerrar con sonido."""
+        play_sound("success")
+        self._cleanup()
+        self.hide()
+        if hasattr(self, "_on_close_callback") and self._on_close_callback:
+            self._on_close_callback(True)
 
     def clean_all_emojis(self, widget):
         import re
@@ -3922,6 +6108,64 @@ class DeviceSettingsDialog(QFrame):
         self.inp_user_name = QLineEdit(self)
         self.inp_user_name.setVisible(False)
         
+        # --- Card 6: 🔊 CONFIGURACIÓN DE SONIDOS ---
+        card_sound = tab.add_card("🔊 CONFIGURACIÓN DE SONIDOS", col_span=2)
+        layout_sound = card_sound.content_layout
+
+        # Activar/Desactivar sonidos
+        self.chk_sounds_enabled = QCheckBox("Activar todos los sonidos")
+        self.chk_sounds_enabled.setChecked(True)
+        self.chk_sounds_enabled.toggled.connect(self._toggle_sounds)
+        layout_sound.addWidget(self.chk_sounds_enabled, 0, 0, 1, 2)
+
+        # Control de volumen
+        vol_lay = QHBoxLayout()
+        vol_lay.addWidget(QLabel("Volumen global:"))
+        self.lbl_volume_val = QLabel("60%")
+        self.lbl_volume_val.setStyleSheet("font-weight:bold;color:rgba(255,255,255,0.6);font-size:13px;")
+        vol_lay.addStretch()
+        vol_lay.addWidget(self.lbl_volume_val)
+        layout_sound.addLayout(vol_lay, 1, 0, 1, 2)
+
+        self.sld_volume = QSlider(Qt.Orientation.Horizontal)
+        self.sld_volume.setRange(0, 100)
+        self.sld_volume.setValue(60)
+        self.sld_volume.valueChanged.connect(lambda v: self.lbl_volume_val.setText(f"{v}%"))
+        self.sld_volume.sliderReleased.connect(self._apply_volume)
+        layout_sound.addWidget(self.sld_volume, 2, 0, 1, 2)
+
+        # Sonidos individuales
+        layout_sound.addWidget(QLabel("Sonidos individuales:"), 3, 0, 1, 2)
+        sound_checkboxes = [
+            ("click", "Click de botón"),
+            ("hover", "Hover sobre botón"),
+            ("open", "Abrir paneles"),
+            ("close", "Cerrar paneles"),
+            ("listen", "Iniciar escucha"),
+            ("respond", "Responder"),
+            ("notification", "Notificaciones"),
+            ("error", "Errores"),
+        ]
+        self._sound_checkboxes = {}
+
+        for i, (key, label) in enumerate(sound_checkboxes):
+            cb = QCheckBox(label)
+            cb.blockSignals(True)
+            cb.setChecked(True)
+            cb.blockSignals(False)
+            cb.toggled.connect(lambda checked, k=key: self._toggle_individual_sound(k, checked))
+            self._sound_checkboxes[key] = cb
+            layout_sound.addWidget(cb, 4 + i // 2, i % 2)
+        
+        # Botón de prueba
+        test_lay = QHBoxLayout()
+        test_lay.addStretch()
+        self.btn_test_sound = QPushButton("🔊 PROBAR SONIDO")
+        self.btn_test_sound.setFixedHeight(40)
+        self.btn_test_sound.clicked.connect(lambda: play_sound("notification"))
+        test_lay.addWidget(self.btn_test_sound)
+        layout_sound.addLayout(test_lay, 4 + len(sound_checkboxes) // 2 + 1, 0, 1, 2)
+
         # --- Card 2: 🎨 TEMA Y ESTILOS ---
         card1 = tab.add_card("🎨 TEMA Y ESTILOS", col_span=2)
         layout1 = card1.content_layout
@@ -3959,6 +6203,16 @@ class DeviceSettingsDialog(QFrame):
         self.btn_custom_font.setFixedHeight(40)
         self.btn_custom_font.clicked.connect(self._add_custom_font)
         layout1.addWidget(self.btn_custom_font, 4, 0, 1, 2)
+        
+        self.chk_stars = QCheckBox("Activar Estrellitas Flotantes")
+        layout1.addWidget(self.chk_stars, 5, 0, 1, 2)
+        self.cmb_star_variant = QComboBox()
+        self.cmb_star_variant.setMinimumHeight(38)
+        for key, data in STAR_VARIANTS.items():
+            self.cmb_star_variant.addItem(data["label"], key)
+        self.chk_stars.toggled.connect(self.cmb_star_variant.setEnabled)
+        layout1.addWidget(QLabel("Variante de Partículas:"), 6, 0)
+        layout1.addWidget(self.cmb_star_variant, 6, 1)
 
         # --- Card 3: 🛠️ COLOR PERSONALIZADO ---
         card2 = tab.add_card("🛠️ COLOR PERSONALIZADO", col_span=2)
@@ -4656,6 +6910,49 @@ class DeviceSettingsDialog(QFrame):
         layout.addWidget(QLabel("DroidCam IP:"), 5, 0)
         layout.addWidget(self.inp_camera_ip, 5, 1, 1, 2)
 
+        # ─── CARD: SMART HOME ──────────────────────────────────────────────  ← NUEVO, va aquí
+        card_smart = tab.add_card("🏠 SMART HOME - CONTROL DE DISPOSITIVOS", col_span=2)
+        layout_smart = card_smart.content_layout
+        
+        self.btn_open_smarthome = QPushButton("🔌 ABRIR PANEL SMART HOME")
+        self.btn_open_smarthome.setFixedHeight(50)
+        self.btn_open_smarthome.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(168, 85, 247, 0.15),
+                    stop:1 rgba(139, 92, 246, 0.08)
+                );
+                border: 1px solid rgba(168, 85, 247, 0.25);
+                border-radius: 14px;
+                color: rgba(255, 255, 255, 0.85);
+                font-weight: 700;
+                font-size: 13px;
+                letter-spacing: 1px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(168, 85, 247, 0.25),
+                    stop:1 rgba(139, 92, 246, 0.15)
+                );
+                border-color: rgba(168, 85, 247, 0.4);
+            }
+        """)
+        self.btn_open_smarthome.clicked.connect(self._open_smarthome_widget)
+        layout_smart.addWidget(self.btn_open_smarthome, 0, 0, 1, 2)
+        
+        self.lbl_smarthome_status = QLabel("📡 Estado: Conectado a Smart Home")
+        self.lbl_smarthome_status.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px; font-style: italic;")
+        layout_smart.addWidget(self.lbl_smarthome_status, 1, 0, 1, 2)
+        
+        self.lbl_smarthome_devices = QLabel("Dispositivos: Cargando...")
+        self.lbl_smarthome_devices.setStyleSheet("color: rgba(255,255,255,0.3); font-size: 10px;")
+        layout_smart.addWidget(self.lbl_smarthome_devices, 2, 0, 1, 2)
+        
+        QTimer.singleShot(500, self._update_smarthome_info)
+        # ─── FIN CARD SMART HOME ─────────────────────────────────────────────
+
         # Spotify Connection Card
         card2 = tab.add_card("🎵 CONFIGURACIÓN DE SPOTIFY", col_span=2)
         layout1 = card2.content_layout
@@ -4703,12 +7000,56 @@ class DeviceSettingsDialog(QFrame):
 
         self.stacked_widget.addWidget(tab)
 
-    # ─── PESTAÑA AUTOMATIZACIÓN (WIDGETS + MACROS) ─────────────────────────
+    def _open_smarthome_widget(self):
+        """Abre el widget flotante de Smart Home."""
+        main_win = self.window()
+        if main_win and hasattr(main_win, "smarthome_widget"):
+            widget = main_win.smarthome_widget
+            if widget.isVisible():
+                widget.hide()
+            else:
+                w = main_win.width()
+                h = main_win.height()
+                widget.move((w - widget.width()) // 2, (h - widget.height()) // 2)
+                widget.show()
+                widget.raise_()
+        else:
+            if main_win and hasattr(main_win, "create_smarthome_widget"):
+                main_win.create_smarthome_widget()
+                self._open_smarthome_widget()
+
+    def _update_smarthome_info(self):
+        """Actualiza la información de dispositivos Smart Home."""
+        try:
+            from actions.smart_home import load_config
+            cfg = load_config()
+
+            ble_count = len(cfg.get("devices", []))
+            tv_count = len(cfg.get("tvs", []))
+            phone_count = len(cfg.get("phones", []))
+            ha = cfg.get("home_assistant", {})
+            ha_active = bool(ha.get("url") and ha.get("token"))
+
+            total = ble_count + tv_count + phone_count
+            if total > 0:
+                self.lbl_smarthome_devices.setText(
+                    f"💡 {ble_count} luces | 📺 {tv_count} TVs | 📱 {phone_count} celulares | "
+                    f"{'🏠 HA activo' if ha_active else '🏠 HA no configurado'}"
+                )
+                self.lbl_smarthome_status.setText("✅ Sistema Smart Home activo")
+                self.lbl_smarthome_status.setStyleSheet("color: rgba(0, 255, 136, 0.6); font-size: 11px;")
+            else:
+                self.lbl_smarthome_devices.setText("📭 No hay dispositivos configurados")
+                self.lbl_smarthome_status.setText("⚠️ Configura Smart Home en config/smart_home.json")
+                self.lbl_smarthome_status.setStyleSheet("color: rgba(255, 200, 0, 0.6); font-size: 11px;")
+
+        except Exception as e:
+            self.lbl_smarthome_devices.setText(f"❌ Error: {e}")
 
     def _build_tab_automation(self):
         tab = self._create_tab_widget()
         
-        card1 = tab.add_card("🤖 IDENTIDAD DEL SISTEMA", col_span=2)
+        card1 = tab.add_card("IDENTIDAD DEL SISTEMA", col_span=2)
         layout1 = card1.content_layout
         
         self.inp_ai_name = QLineEdit()
@@ -4716,6 +7057,10 @@ class DeviceSettingsDialog(QFrame):
         self.inp_ai_name.setMinimumHeight(40)
         layout1.addWidget(QLabel("Nombre de la IA:"), 0, 0)
         layout1.addWidget(self.inp_ai_name, 0, 1)
+
+        self.chk_only_name_response = QCheckBox("Solo responder cuando me llamen por NEXUS (BETA)")
+        self.chk_only_name_response.setStyleSheet("QCheckBox { color: rgba(255,255,255,0.7); font-size: 12px; spacing: 14px; padding: 8px 0; }")
+        layout1.addWidget(self.chk_only_name_response, 1, 0, 1, 2)
         
         icon_lay = QHBoxLayout()
         icon_lay.setSpacing(16)
@@ -4727,8 +7072,8 @@ class DeviceSettingsDialog(QFrame):
         self.btn_browse_icon.clicked.connect(self._browse_app_icon)
         icon_lay.addWidget(self.inp_app_icon)
         icon_lay.addWidget(self.btn_browse_icon)
-        layout1.addWidget(QLabel("Icono Aplicación:"), 1, 0)
-        layout1.addLayout(icon_lay, 1, 1)
+        layout1.addWidget(QLabel("Icono Aplicación:"), 2, 0)
+        layout1.addLayout(icon_lay, 2, 1)
 
         card2 = tab.add_card("🎛️ CONTROL DE WIDGETS", col_span=2)
         layout2 = card2.content_layout
@@ -4736,15 +7081,14 @@ class DeviceSettingsDialog(QFrame):
         self.chk_widget_spotify = QCheckBox("Mostrar Widget Spotify Flotante")
         self.chk_widget_media = QCheckBox("Mostrar Widget YouTube/Medios (Universal)")
         self.chk_widget_weather = QCheckBox("Mostrar Widget del Clima")
-        self.chk_widget_notifications = QCheckBox("Mostrar Panel de Notificaciones")
+        self.chk_widget_notifications = QCheckBox("Mostrar Accesos Directos")
         self.chk_widget_calendar = QCheckBox("Mostrar Calendario")
-        self.chk_widget_system = QCheckBox("Mostrar Widget de Sistema")
         self.chk_widget_todo = QCheckBox("Mostrar Widget de Tareas")
         self.chk_widget_notes = QCheckBox("Mostrar Widget de Notas")
         self.chk_widget_files = QCheckBox("Mostrar Panel de Archivos/Macros")
 
         widgets = [self.chk_widget_spotify, self.chk_widget_media, self.chk_widget_weather, self.chk_widget_notifications,
-                   self.chk_widget_calendar, self.chk_widget_system, self.chk_widget_todo,
+                   self.chk_widget_calendar, self.chk_widget_todo,
                    self.chk_widget_notes, self.chk_widget_files]
         for i, w in enumerate(widgets):
             w.setStyleSheet("QCheckBox { color: rgba(255,255,255,0.7); font-size: 12px; spacing: 14px; padding: 8px 0; }")
@@ -5201,6 +7545,89 @@ class DeviceSettingsDialog(QFrame):
         is_custom = (self.cmb_theme.currentData() == "custom")
         self.btn_color_picker.setVisible(is_custom)
         self.lbl_color_preview.setVisible(is_custom)
+    
+    def _toggle_sounds(self, enabled):
+        """Activa o desactiva todos los sonidos globalmente."""
+        get_sound_manager().set_enabled(enabled)
+        try:
+            from memory.config_manager import load_api_keys, save_api_keys
+            cfg = load_api_keys()
+            cfg["sounds_enabled"] = enabled
+            save_api_keys(cfg)
+        except Exception as e:
+            print(f"Error guardando sounds_enabled: {e}")
+    # 🆕 Ya NO se hace cb.setEnabled(enabled) — los checkboxes individuales
+    # siempre quedan interactuables, incluso con el interruptor global apagado.
+            
+    def _toggle_individual_sound(self, sound_key: str, enabled: bool):
+        """Activa o desactiva un sonido específico y lo aplica en caliente."""
+        try:
+            from memory.config_manager import load_api_keys, save_api_keys
+            cfg = load_api_keys()
+        
+            # Usar el nuevo formato
+            cfg[f"sound_{sound_key}"] = enabled
+        
+            # Opcional: eliminar la clave antigua si existe
+            if f"sound_chk_{sound_key}" in cfg:
+                del cfg[f"sound_chk_{sound_key}"]
+            
+            save_api_keys(cfg)
+            get_sound_manager().set_event_enabled(sound_key, enabled)
+            print(f"[Sound] {sound_key} -> {enabled} guardado")
+        except Exception as e:
+            print(f"Error guardando configuración de sonido: {e}")
+
+    def save_api_keys(cfg: dict):
+        """Guarda la configuración en api_keys.json."""
+        import json
+        from pathlib import Path
+        BASE_DIR = Path(__file__).resolve().parent.parent
+        config_path = BASE_DIR / "config" / "api_keys.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    
+    def _apply_volume(self):
+        """Aplica el volumen seleccionado."""
+        volume = self.sld_volume.value() / 100.0
+        get_sound_manager().set_volume(volume)
+
+    def _load_sound_settings(self):
+        try:
+            from memory.config_manager import load_api_keys, save_api_keys
+            cfg = load_api_keys()
+
+            enabled = cfg.get("sounds_enabled", True)
+            self.chk_sounds_enabled.setChecked(enabled)
+            get_sound_manager().set_enabled(enabled)
+        
+            volume = cfg.get("sounds_volume", 0.6)
+            self.sld_volume.setValue(int(volume * 100))
+            self.lbl_volume_val.setText(f"{int(volume * 100)}%")
+            get_sound_manager().set_volume(volume)
+
+            # Mapeo de claves del JSON a los checkboxes
+            for key, cb in self._sound_checkboxes.items():
+                # Intentar leer con el nuevo formato
+                individual_enabled = cfg.get(f"sound_{key}", True)
+            
+                # Si no existe, intentar con el formato antiguo (sound_chk_)
+                if f"sound_{key}" not in cfg:
+                    individual_enabled = cfg.get(f"sound_chk_{key}", True)
+                    # Migrar a nuevo formato
+                    cfg[f"sound_{key}"] = individual_enabled
+                    if f"sound_chk_{key}" in cfg:
+                        del cfg[f"sound_chk_{key}"]
+            
+                cb.setChecked(individual_enabled)
+                get_sound_manager().set_event_enabled(key, individual_enabled)
+        
+            # Guardar los cambios de migración
+            save_api_keys(cfg)
+        
+        except Exception as e:
+            print(f"Error cargando configuración de sonidos: {e}")
 
     def _open_color_picker(self):
         try:
@@ -5539,6 +7966,7 @@ class DeviceSettingsDialog(QFrame):
             self.inp_openrouter.setText(cfg.get("openrouter_api_key", ""))
             self.inp_openrouter_model.setText(cfg.get("openrouter_model", "google/gemini-2.5-flash"))
             self.inp_ai_name.setText(cfg.get("ai_name", ""))
+            self.chk_only_name_response.setChecked(bool(cfg.get("respond_only_by_name", False)))
             self.inp_app_icon.setText(cfg.get("nexus_app_icon", ""))
 
             prov = cfg.get("ai_provider", "gemini")
@@ -5564,6 +7992,12 @@ class DeviceSettingsDialog(QFrame):
             idx = self.cmb_theme.findData(theme)
             if idx >= 0:
                 self.cmb_theme.setCurrentIndex(idx)
+            self.chk_stars.setChecked(cfg.get("nexus_stars", False))
+            star_variant = cfg.get("nexus_star_variant", "estrellas")
+            idx = self.cmb_star_variant.findData(star_variant)
+            if idx >= 0:
+                self.cmb_star_variant.setCurrentIndex(idx)
+            self.cmb_star_variant.setEnabled(self.chk_stars.isChecked())
             self._toggle_theme_fields()
             if self.custom_color_hex:
                 self.lbl_color_preview.setStyleSheet(
@@ -5683,14 +8117,14 @@ class DeviceSettingsDialog(QFrame):
 
             # Cargar visibilidad de widgets
             self.chk_widget_spotify.setChecked(cfg.get("show_widget_spotify", False))
-            self.chk_widget_media.setChecked(cfg.get("show_widget_media", False))
+            self.chk_widget_media.setChecked(cfg.get("show_widget_media", True))
             self.chk_widget_weather.setChecked(cfg.get("show_widget_weather", False))
             self.chk_widget_notifications.setChecked(cfg.get("show_widget_notifications", False))
             self.chk_widget_calendar.setChecked(cfg.get("show_widget_calendar", False))
-            self.chk_widget_system.setChecked(cfg.get("show_widget_system", False))
             self.chk_widget_todo.setChecked(cfg.get("show_widget_todo", False))
             self.chk_widget_notes.setChecked(cfg.get("show_widget_notes", False))
             self.chk_widget_files.setChecked(cfg.get("show_widget_files", False))
+            self._load_sound_settings()
 
             # Personalidades
             try:
@@ -5736,7 +8170,12 @@ class DeviceSettingsDialog(QFrame):
 
             cfg = load_api_keys()
             cfg.update({
+                "nexus_stars": self.chk_stars.isChecked(),
+                "nexus_star_variant": self.cmb_star_variant.currentData(),
+                "sounds_enabled": self.chk_sounds_enabled.isChecked(),
+                "sounds_volume": self.sld_volume.value() / 100.0,
                 "ai_name": self.inp_ai_name.text().strip(),
+                "respond_only_by_name": self.chk_only_name_response.isChecked(),
                 "nexus_app_icon": self.inp_app_icon.text().strip(),
                 "gemini_api_key": self.inp_gemini.text().strip(),
                 "openrouter_api_key": self.inp_openrouter.text().strip(),
@@ -5777,11 +8216,15 @@ class DeviceSettingsDialog(QFrame):
                 "show_widget_weather": self.chk_widget_weather.isChecked(),
                 "show_widget_notifications": self.chk_widget_notifications.isChecked(),
                 "show_widget_calendar": self.chk_widget_calendar.isChecked(),
-                "show_widget_system": self.chk_widget_system.isChecked(),
                 "show_widget_todo": self.chk_widget_todo.isChecked(),
                 "show_widget_notes": self.chk_widget_notes.isChecked(),
                 "show_widget_files": self.chk_widget_files.isChecked(),
             })
+
+            # Guardar estados individuales de sonidos
+            if hasattr(self, '_sound_checkboxes'):
+                for key, cb in self._sound_checkboxes.items():
+                    cfg[f"sound_{key}"] = cb.isChecked()
 
             save_api_keys(cfg)
             self._save_personalities_file()
@@ -5916,6 +8359,47 @@ class EmbeddedBrowserDialog(QDialog):
         layout.addWidget(container)
 
 
+class DraggableSticker(QLabel):
+    """Sticker que se puede arrastrar a cualquier posición."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._drag_pos = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            new_pos = self.pos() + event.position().toPoint() - self._drag_pos
+            # Clamp dentro del parent
+            parent = self.parentWidget()
+            if parent:
+                max_x = parent.width() - self.width()
+                max_y = parent.height() - self.height()
+                new_pos.setX(max(0, min(new_pos.x(), max_x)))
+                new_pos.setY(max(0, min(new_pos.y(), max_y)))
+            self.move(new_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        # Guardar posición
+        try:
+            from memory.config_manager import load_api_keys, save_api_keys
+            cfg = load_api_keys()
+            cfg["sticker_pos_x"] = self.x()
+            cfg["sticker_pos_y"] = self.y()
+            save_api_keys(cfg)
+        except Exception:
+            pass
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     _shutdown_sig = pyqtSignal()
     student_action_sig = pyqtSignal(str, dict)
@@ -5941,23 +8425,39 @@ class MainWindow(QMainWindow):
             from memory.config_manager import load_api_keys
             cfg = load_api_keys()
             ci = cfg.get("nexus_app_icon", "")
-            if ci and Path(ci).exists(): self.setWindowIcon(QIcon(ci))
+            if ci and Path(ci).exists(): 
+                self.setWindowIcon(QIcon(ci))
             else:
                 ip = get_bundled_path("assets", "nexus_icono.ico")
-                if ip.exists(): self.setWindowIcon(QIcon(str(ip)))
-        except Exception: pass
+                if ip.exists(): 
+                    self.setWindowIcon(QIcon(str(ip)))
+        except Exception: 
+            pass
 
+        # ═══════════════════════════════════════════════════════════════
+        # ✅ CREAR WIDGETS DE FONDO Y STICKER (ANTES DE update_theme_styles)
+        # ═══════════════════════════════════════════════════════════════
         self.lbl_bg_image = QLabel(self.central_widget)
         self.lbl_bg_image.lower()
         self.lbl_bg_image.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.lbl_bg_image.setStyleSheet("background:transparent;")
         self.lbl_bg_image.hide()
 
-        self.lbl_sticker = QLabel(self.central_widget)
-        self.lbl_sticker.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.lbl_sticker = DraggableSticker(self.central_widget)
         self.lbl_sticker.setStyleSheet("background:transparent;")
         self.lbl_sticker.hide()
 
+        try:
+           from memory.config_manager import load_api_keys
+           _star_variant = load_api_keys().get("nexus_star_variant", "estrellas")
+        except Exception:
+            _star_variant = "estrellas"
+        self.star_overlay = StarOverlayWidget(self.central_widget, variant=_star_variant)  # 👈 ESTO FALTABA (se borró sin querer)
+        self.star_overlay.setGeometry(0, 0, self.central_widget.width(), self.central_widget.height())
+        self.star_overlay.lower()
+        self.lbl_bg_image.lower()
+
+        # ─── WIDGETS PRINCIPALES ──────────────────────────────────────
         self.orb = CustomParticleOrb(self.ui, self.central_widget)
         self.clock_w = ClockWidget(self.central_widget)
         self.top_right_dock = TopRightDock(self.central_widget)
@@ -5974,25 +8474,26 @@ class MainWindow(QMainWindow):
         self.pro_badge = ProBadge(self.central_widget)
         self.pro_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-        # ── WIDGETS FLOTANTES ──────────────────────────────────────────────
+        # ── WIDGETS FLOTANTES ───────────────────────────────────────
         self.spotify_float = FloatingSpotifyWidget(self.central_widget)
         self.media_float = FloatingMediaWidget(self.central_widget)
         self.weather_widget = WeatherWidget(self.central_widget)
-        self.notif_panel = NotificationCard(self.central_widget)
-        self.notif_panel.btn_close_notif.clicked.connect(self._toggle_notification_panel)
+        self.notif_panel = ShortcutsCard(self.central_widget)
         self.calendar_popup = HUDCalendarWidget(self.central_widget)
 
-        # ── WIDGETS CLÁSICOS (ocultos por defecto) ─────────────────────────
+        # ─── SMART HOME WIDGET ──────────────────────────────────────
+        self.smarthome_widget = SmartHomeWidget(self.central_widget)
+        self.smarthome_widget.hide()
+
+        # ── WIDGETS CLÁSICOS ────────────────────────────────────────
         self.files_panel = FilesPanel(self.ui, self.central_widget)
         self.notes_w = NotesWidget(self.central_widget)
         self.todo_w = TodoWidget(self.central_widget)
-        self.system_w = SystemWidget(self.central_widget)
 
         # Ocultar widgets clásicos inicialmente
         self.files_panel.hide()
         self.notes_w.hide()
         self.todo_w.hide()
-        self.system_w.hide()
 
         self.chat_bar = PillChatBar(self.central_widget)
         self.chat_bar.submitted.connect(self._submit_chat_command)
@@ -6008,6 +8509,8 @@ class MainWindow(QMainWindow):
         self.ui.is_sleeping = False
         self._setup_tray_icon()
         self._shutdown_sig.connect(self._handle_shutdown)
+        
+        # ✅ AHORA SÍ, LLAMAR A update_theme_styles (DESPUÉS de crear los widgets)
         self.update_theme_styles()
 
         # Cargar posiciones guardadas de los widgets
@@ -6040,11 +8543,23 @@ class MainWindow(QMainWindow):
 
         # Aplicar visibilidad inicial de widgets
         QTimer.singleShot(500, self._apply_widget_visibility)
+        QTimer.singleShot(200, self._force_bg_load)
 
         # Habilitar mouse tracking para el redimensionamiento del HUD
         self.setMouseTracking(True)
         self.central_widget.setMouseTracking(True)
 
+    # ═══════════════════════════════════════════════════════════════
+    #  📌 AQUÍ VA EL MÉTODO - DENTRO DE LA CLASE
+    # ═══════════════════════════════════════════════════════════════
+    def create_smarthome_widget(self):
+        """Crea y configura el widget Smart Home si no existe."""
+        if not hasattr(self, "smarthome_widget") or self.smarthome_widget is None:
+            self.smarthome_widget = SmartHomeWidget(self.central_widget)
+            self.smarthome_widget.hide()
+        return self.smarthome_widget
+
+    # ─── MÉTODOS EXISTENTES ─────────────────────────────────────────
     def _load_widget_positions(self):
         """Carga las posiciones guardadas de los widgets desde la configuración."""
         try:
@@ -6123,12 +8638,7 @@ class MainWindow(QMainWindow):
         else:
             self.calendar_popup.hide()
 
-        # ── WIDGETS CLÁSICOS ──
-        if cfg.get("show_widget_system", False):
-            if not self.system_w.isVisible():
-                self.animate_show_widget(self.system_w)
-        else:
-            self.system_w.hide()
+        # ── WIDGETS CLÁSICOS ─
 
         if cfg.get("show_widget_todo", False):
             if not self.todo_w.isVisible():
@@ -6149,7 +8659,8 @@ class MainWindow(QMainWindow):
             self.files_panel.hide()
 
     def resizeEvent(self, event):
-        if event is not None: super().resizeEvent(event)
+        if event is not None: 
+            super().resizeEvent(event)
         W = self.central_widget.width()
         H = self.central_widget.height()
 
@@ -6157,51 +8668,172 @@ class MainWindow(QMainWindow):
         path.addRoundedRect(QRectF(0, 0, W, H), 18.0, 18.0)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
+        
         if hasattr(self, "lbl_bg_image") and self.lbl_bg_image.isVisible():
-            self.lbl_bg_image.setGeometry(0, 0, W, H); self.lbl_bg_image.lower()
+            self.lbl_bg_image.setGeometry(0, 0, W, H)
+            self.lbl_bg_image.lower()
+
+        # ═══════════════════════════════════════════════════════════════
+        # CARGA DE IMAGEN DE FONDO
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys()
+            bg_img = cfg.get("nexus_bg_image", "")
+            if bg_img and Path(bg_img).exists():
+                from PyQt6.QtGui import QPixmap, QMovie
+                if str(bg_img).lower().endswith(".gif"):
+                    if not hasattr(self, "_current_bg_movie"):
+                        movie = QMovie(bg_img)
+                        movie.setScaledSize(QSize(W, H))
+                        self.lbl_bg_image.setMovie(movie)
+                        movie.start()
+                        self._current_bg_movie = movie
+                    else:
+                        self._current_bg_movie.setScaledSize(QSize(W, H))
+                else:
+                    pix = QPixmap(bg_img)
+                    if not pix.isNull():
+                        scaled = pix.scaled(W, H, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                        self.lbl_bg_image.setPixmap(scaled)
+                self.lbl_bg_image.show()
+        except Exception:
+            pass
+        if hasattr(self, "star_overlay"):
+            self.star_overlay.setGeometry(0, 0, W, H)   
+            try:
+                from memory.config_manager import load_api_keys
+                _cfg_star = load_api_keys()
+                self.star_overlay.set_variant(_cfg_star.get("nexus_star_variant", "estrellas"))
+                if _cfg_star.get("nexus_stars", False):
+                    self.star_overlay.show()
+                else:
+                    self.star_overlay.hide()
+            except Exception:
+                pass
+            
+            
 
         if hasattr(self, "settings_overlay") and self.settings_overlay:
             self.settings_overlay.setGeometry(0, 0, W, H)
 
-        self.orb.setGeometry(8, 8, W - 16, H - 16)
-        self.clock_w.setGeometry(28, 28, 320, 70)
-        self.top_right_dock.setGeometry(W - 120, 14, 88, 60)
-        self.sys_monitor.setGeometry(W - 130, 80, 100, 110)
-        self.bottom_left_dock.setGeometry(28, H - 62, 140, 46)
-        np_h = self.notif_panel.sizeHint().height() if self.notif_panel.isVisible() else 0
-        self.notif_panel.setGeometry(28, H - 72 - max(np_h, 150), 310, max(np_h, 150))
-        self.calendar_popup.setGeometry(50, H - 310, 230, 190)
-        dock_w = 140; dock_h = 46
-        self.bottom_dock.setGeometry((W - dock_w) // 2, H - 62, dock_w, dock_h)
+        if hasattr(self, "orb"):
+            self.orb.setGeometry(8, 8, W - 16, H - 16)
+        
+        if hasattr(self, "clock_w"):
+            self.clock_w.setGeometry(28, 28, 320, 70)
+        
+        if hasattr(self, "top_right_dock"):
+            self.top_right_dock.setGeometry(W - 120, 14, 88, 60)
+        
+        if hasattr(self, "sys_monitor"):
+            self.sys_monitor.setGeometry(W - 130, 80, 100, 110)
+        
+        if hasattr(self, "bottom_left_dock"):
+            self.bottom_left_dock.setGeometry(28, H - 62, 140, 46)
+        
+        if hasattr(self, "notif_panel"):
+            w = self.notif_panel.width()
+            h = self.notif_panel.height()
+            x = 28
+            y = H - 72 - h 
+            y = max(y, 20)
+            self.notif_panel.setGeometry(x, y, w, h)
+        
+        if hasattr(self, "calendar_popup"):
+            self.calendar_popup.setGeometry(50, H - 310, 230, 190)
+        
+        dock_w = 140
+        dock_h = 46
+        if hasattr(self, "bottom_dock"):
+            self.bottom_dock.setGeometry((W - dock_w) // 2, H - 62, dock_w, dock_h)
+        
         chat_w = 300
-        self.chat_bar.setFixedWidth(chat_w)
-        self.chat_bar.setGeometry((W - chat_w) // 2, H - 114, chat_w, 44)
-        self.pro_badge.setGeometry(W - 100, H - 30, 100, 22)
-        self.txt_console.setGeometry(80, H - 168, W - 160, 50)
+        if hasattr(self, "chat_bar"):
+            self.chat_bar.setFixedWidth(chat_w)
+            self.chat_bar.setGeometry((W - chat_w) // 2, H - 114, chat_w, 44)
+        
+        if hasattr(self, "pro_badge"):
+            self.pro_badge.setGeometry(W - 100, H - 30, 100, 22)
+        
+        if hasattr(self, "txt_console"):
+            self.txt_console.setGeometry(80, H - 168, W - 160, 50)
 
         # Posicionar widgets flotantes solo si no se han movido manualmente
         if not hasattr(self, "_spotify_positioned"):
-            self.spotify_float.move((W - 280) // 2 + 80, H // 2 - 120)
+            if hasattr(self, "spotify_float"):
+                self.spotify_float.move((W - 280) // 2 + 80, H // 2 - 120)
             self._spotify_positioned = True
             
-            # FloatingMediaWidget
-            self.media_float.move((W - 280) // 2 + 80, H // 2)
-
+            if hasattr(self, "media_float"):
+                self.media_float.move((W - 280) // 2 + 80, H // 2)
 
         # Sticker
-        if hasattr(self, "_sticker_path") and self._sticker_path and self.lbl_sticker.isVisible():
-            sw = getattr(self, "_sticker_w", 100); sh = getattr(self, "_sticker_h", 100)
-            sx = int((W - sw) * 0.5); sy = int((H - sh) * 0.5)
+        if hasattr(self, "_sticker_path") and self._sticker_path and hasattr(self, "lbl_sticker") and self.lbl_sticker.isVisible():
+            sw = getattr(self, "_sticker_w", 100)
+            sh = getattr(self, "_sticker_h", 100)
+            sx = int((W - sw) * 0.5)
+            sy = int((H - sh) * 0.5)
             self.lbl_sticker.setGeometry(sx, sy, sw, sh)
 
-        self.lbl_bg_image.lower(); self.orb.lower()
-        for w in (self.clock_w, self.top_right_dock, self.sys_monitor,
-                  self.bottom_left_dock, self.notif_panel, self.calendar_popup,
-                  self.bottom_dock, self.chat_bar, self.spotify_float,
-                  self.txt_console, self.pro_badge, self.lbl_sticker,
-                  self.weather_widget, self.system_w, self.todo_w,
-                  self.notes_w, self.files_panel):
-            w.raise_()
+        # ✅ lower() CON VERIFICACIONES
+        if hasattr(self, "lbl_bg_image"):
+            self.lbl_bg_image.lower()
+
+            # 🔥 NUEVO: Re-escalar imagen de fondo al redimensionar
+            bg_img = None
+            try:
+                from memory.config_manager import load_api_keys
+                cfg = load_api_keys()
+                bg_img = cfg.get("nexus_bg_image", "")
+            except:
+                pass  
+
+            if bg_img and Path(bg_img).exists():
+                from PyQt6.QtGui import QPixmap, QMovie
+                if str(bg_img).lower().endswith(".gif"):
+                    # Re-escalar GIF en resize
+                    if hasattr(self, "_current_bg_movie") and self._current_bg_movie:
+                        self._current_bg_movie.setScaledSize(QSize(W, H))
+                else:
+                    # Re-escalar imagen estática
+                    pix = QPixmap(bg_img)
+                    if not pix.isNull():
+                        scaled_pix = pix.scaled(
+                            W, H,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        self.lbl_bg_image.setPixmap(scaled_pix)   
+        if hasattr(self, "orb"):
+            self.orb.lower()
+        
+        # ✅ raise() CON VERIFICACIONES - SOLUCIÓN PARA EL ERROR
+        widgets_to_raise = [
+            getattr(self, 'clock_w', None),
+            getattr(self, 'top_right_dock', None),
+            getattr(self, 'sys_monitor', None),
+            getattr(self, 'bottom_left_dock', None),
+            getattr(self, 'notif_panel', None),
+            getattr(self, 'calendar_popup', None),
+            getattr(self, 'bottom_dock', None),
+            getattr(self, 'chat_bar', None),
+            getattr(self, 'spotify_float', None),
+            getattr(self, 'txt_console', None),
+            getattr(self, 'pro_badge', None),
+            getattr(self, 'lbl_sticker', None),
+            getattr(self, 'weather_widget', None),
+            getattr(self, 'todo_w', None),
+            getattr(self, 'notes_w', None),
+            getattr(self, 'files_panel', None),
+            getattr(self, 'smarthome_widget', None),  # ← Agregar el nuevo widget
+        ]
+        for w in widgets_to_raise:
+            if w is not None:
+                try:
+                    w.raise_()
+                except Exception:
+                    pass  # Ignorar errores en raise
 
     def update_theme_styles(self):
         try:
@@ -6221,29 +8853,61 @@ class MainWindow(QMainWindow):
             if bg_img and Path(bg_img).exists():
                 from PyQt6.QtGui import QPixmap, QMovie
                 from PyQt6.QtWidgets import QGraphicsOpacityEffect
+
+                widget_w = self.lbl_bg_image.width()
+                widget_h = self.lbl_bg_image.height()
+
+                # Si el widget no tiene tamaño aún, usar el tamaño de la ventana
+
+                if widget_w == 0 or widget_h == 0:
+                    widget_w = self.width()
+                    widget_h = self.height()
                 
-                # Check for GIF
+                # 🔥 ESCALADO PARA 4K - MANTENER PROPORCIÓN
                 if str(bg_img).lower().endswith(".gif"):
                     movie = QMovie(bg_img)
+                    # Escalar el GIF al tamaño del widget manteniendo proporción
+                    movie.setScaledSize(QSize(widget_w, widget_h))
                     self.lbl_bg_image.setMovie(movie)
                     self.lbl_bg_image.show()
                     movie.start()
-                    # keep a reference to movie
                     self._current_bg_movie = movie
                 else:
                     pix = QPixmap(bg_img)
                     if not pix.isNull():
-                        self.lbl_bg_image.setPixmap(pix)
+                        # 🔥 ESCALAR MANTENIENDO PROPORCIÓN (Cover)
+                        scaled_pix = pix.scaled(
+                            widget_w, 
+                            widget_h,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,  # 🔥 MODO COVER
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        self.lbl_bg_image.setPixmap(scaled_pix)
                         self.lbl_bg_image.show()
                         if hasattr(self, "_current_bg_movie"):
                             self._current_bg_movie = None
-                
-                oe = QGraphicsOpacityEffect(self); oe.setOpacity(float(cfg.get("nexus_bg_opacity", 0.85)))
-                self.lbl_bg_image.setGraphicsEffect(oe)
+                    else:
+                        self.lbl_bg_image.clear()
+                        self.lbl_bg_image.hide()
+                        
+                    # Opacidad
+
+                    oe = QGraphicsOpacityEffect(self)
+                    oe.setOpacity(float(cfg.get("nexus_bg_opacity", 0.85)))
+                    self.lbl_bg_image.setGraphicsEffect(oe)
             else:
                 self.lbl_bg_image.clear(); self.lbl_bg_image.hide()
                 if hasattr(self, "_current_bg_movie"):
                     self._current_bg_movie = None
+
+            # Estrellitas Flotantes
+            if hasattr(self, "star_overlay"):
+                star_variant = cfg.get("nexus_star_variant", "estrellas")
+                self.star_overlay.set_variant(star_variant)
+                if cfg.get("nexus_stars", False):
+                    self.star_overlay.show()
+                else:
+                    self.star_overlay.hide()
 
             # Sticker
             sticker_path = cfg.get("nexus_sticker_path", "")
@@ -6285,15 +8949,37 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self):
         self._hud_widgets_states = {}
-        for w in [self.orb, self.clock_w, self.top_right_dock, self.sys_monitor,
-                  self.bottom_left_dock, self.notif_panel, self.calendar_popup,
-                  self.bottom_dock, self.chat_bar, self.spotify_float,
-                  self.txt_console, self.pro_badge, self.lbl_sticker,
-                  self.weather_widget, self.system_w, self.todo_w,
-                  self.notes_w, self.files_panel]:
+
+        # Lista de widgets con verificación de existencia
+        widgets = [
+            getattr(self, 'orb', None),
+            getattr(self, 'clock_w', None),
+            getattr(self, 'top_right_dock', None),
+            getattr(self, 'sys_monitor', None),
+            getattr(self, 'bottom_left_dock', None),
+            getattr(self, 'notif_panel', None),
+            getattr(self, 'calendar_popup', None),
+            getattr(self, 'bottom_dock', None),
+            getattr(self, 'chat_bar', None),
+            getattr(self, 'spotify_float', None),
+            getattr(self, 'txt_console', None),
+            getattr(self, 'pro_badge', None),
+            getattr(self, 'lbl_sticker', None),
+            getattr(self, 'weather_widget', None),
+            getattr(self, 'todo_w', None),
+            getattr(self, 'notes_w', None),
+            getattr(self, 'files_panel', None),
+            getattr(self, 'smarthome_widget', None),
+        ]
+
+        for w in widgets:
             if w is not None:
-                self._hud_widgets_states[w] = w.isVisible()
-                w.hide()
+                try:
+                    # store visibility state and hide
+                    self._hud_widgets_states[w] = w.isVisible()
+                    w.hide()
+                except Exception:
+                    pass
 
         W = self.central_widget.width()
         H = self.central_widget.height()
@@ -6311,7 +8997,7 @@ class MainWindow(QMainWindow):
 
     def animate_show_widget(self, widget):
         # Grab target position
-        target_pos = widget.pos()
+        target_pos = widget.frameGeometry().topLeft()
         target_x = target_pos.x()
         target_y = target_pos.y()
         start_y = target_y + 80  # Slide up from 80px below
@@ -6415,29 +9101,35 @@ class MainWindow(QMainWindow):
     def _toggle_chat(self):
         if self.chat_bar.isVisible():
             self.chat_bar.hide()
+            play_sound("close")
             self.bottom_dock.btn_chat.set_active(False, "#ffffff")
         else:
             W = self.central_widget.width(); H = self.central_widget.height()
             self.chat_bar.setGeometry((W - 300) // 2, H - 114, 300, 44)
             self.animate_show_widget(self.chat_bar)
             self.chat_bar.inp.setFocus()
+            play_sound("open")  # 🆕 Sonido al abrir
             self.bottom_dock.btn_chat.set_active(True, "#ffffff")
 
     def _toggle_notification_panel(self):
         if self.notif_panel.isVisible():
             self.notif_panel.hide()
+            play_sound("close")
             self.bottom_left_dock.set_notification(False)
         else:
             self.resizeEvent(None)
             self.animate_show_widget(self.notif_panel)
+            play_sound("open")
             self.bottom_left_dock.set_notification(False)
 
     def _toggle_calendar(self):
         if self.calendar_popup.isVisible():
             self.calendar_popup.hide()
+            play_sound("close")
         else:
             self.resizeEvent(None)
             self.animate_show_widget(self.calendar_popup)
+            play_sound("open") 
 
     def _toggle_mute(self):
         if self.ui.on_stop_command: self.ui.on_stop_command()
@@ -6488,9 +9180,7 @@ class MainWindow(QMainWindow):
 
     def push_notification(self, title: str, body: str, accent: str = "#a855f7",
                           thumbnail_path=None, action_label=None, action_callback=None):
-        self.notif_panel.push_notification(title, body, accent, thumbnail_path, action_label, action_callback)
-        self.bottom_left_dock.set_notification(True)
-        self.resizeEvent(None)
+        print(f"[Notificación Silenciada] {title}: {body}")
 
     def show_spotify(self):
         if not hasattr(self, "_spotify_positioned"):
@@ -6539,6 +9229,17 @@ class MainWindow(QMainWindow):
             if self.isVisible(): self.hide()
             else: self.show_and_activate()
 
+    def _force_bg_load(self):
+        """Forzar carga de imagen de fondo."""
+        try:
+            from memory.config_manager import load_api_keys
+            cfg = load_api_keys()
+            bg_img = cfg.get("nexus_bg_image", "")
+            if bg_img and Path(bg_img).exists():
+                self.resizeEvent(None)
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         if getattr(self, "_force_close", False):
             self.stop_gesture_thread(); event.accept()
@@ -6548,6 +9249,7 @@ class MainWindow(QMainWindow):
                 from PyQt6.QtWidgets import QSystemTrayIcon
                 self.tray_icon.showMessage("NEXUS AI", "Sigo activo en segundo plano.",
                     QSystemTrayIcon.MessageIcon.Information, 3000)
+                
 
     def _get_resize_edge(self, pos):
         margin = 8
@@ -6767,343 +9469,973 @@ class NexusUI:
                   f"$s.IconLocation='{icon_path}';$s.Save()")
             subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e: print(f"[STARTUP] {e}")
-    
-    
 
+        """
+student_mode_ui.py — Reemplazo de la sección "Student Mode Workers + Window" de ui.py
+
+CÓMO INSTALARLO
+────────────────
+1. En ui.py, BORRA por completo estas clases (están todas seguidas al final del archivo):
+     - DocumentRenderWorker
+     - PdfToWordWorker
+     - QualityReportWorker
+     - ApaVerifyWorker
+     - StudentModeWindow
+   (busca el comentario "Student Mode Workers + Window" — es justo esa sección hasta el
+   final del archivo).
+
+2. Pega TODO el contenido de este archivo en su lugar (al final de ui.py), dejando arriba
+   intactas las clases NexusUI, MainWindow, etc.
+
+3. Instala las dependencias nuevas que usa el conversor universal:
+     pip install pdf2docx python-docx openpyxl python-pptx pypdf comtypes
+
+Este archivo asume que ya existen en ui.py (más arriba en el mismo módulo): HAS_QTA, qta,
+C_PRI, C_PRI_DIM, C_BG, C_TEXT, C_BORDER, apply_glass_shadow, y los imports de PyQt6 ya
+usados en el resto del archivo (QThread, pyqtSignal, etc.).
+"""
+
+from actions.student_mode import (
+    extract_text,
+    convert_file,
+    get_available_targets,
+    paraphrase_text,
+    check_grammar_and_style,
+    verify_apa_full,
+    ask_consulta,
+    translate_text,
+    CONSULTA_SYSTEM_PROMPTS,
+    LANGUAGES,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Student Mode Workers + Window
+#  Workers (QThread) — cada pestaña tiene el suyo para no congelar la UI
 # ═══════════════════════════════════════════════════════════════════════════
 
 class DocumentRenderWorker(QThread):
+    """Renderiza páginas de un PDF/DOCX como imágenes para la vista previa de APA 7."""
     progress = pyqtSignal(int)
     status = pyqtSignal(str)
     finished = pyqtSignal(list, str)
-    def __init__(self, file_path): super().__init__(); self.file_path = file_path
+
+    def __init__(self, file_path):
+        super().__init__()
+        self.file_path = file_path
+
     def run(self):
-        import os, fitz
+        import os
+        import fitz
         from PyQt6.QtGui import QImage
         temp_pdf = None
         try:
-            self.status.emit("Preparando…"); self.progress.emit(10)
-            ext = os.path.splitext(self.file_path)[1].lower(); pdf = self.file_path
+            self.status.emit("Preparando…")
+            self.progress.emit(10)
+            ext = os.path.splitext(self.file_path)[1].lower()
+            pdf = self.file_path
             if ext == ".docx":
-                self.status.emit("Convirtiendo Word a PDF…"); self.progress.emit(25)
-                import comtypes.client; comtypes.CoInitialize()
+                self.status.emit("Convirtiendo Word a PDF…")
+                self.progress.emit(25)
                 try:
-                    w = comtypes.client.CreateObject("Word.Application"); w.Visible = False
-                    doc = w.Documents.Open(os.path.abspath(self.file_path))
-                    temp_pdf = os.path.join(os.path.dirname(self.file_path), f"_tmp_{os.path.basename(self.file_path)}.pdf")
-                    doc.SaveAs(os.path.abspath(temp_pdf), FileFormat=17); doc.Close(); w.Quit(); pdf = temp_pdf
-                except Exception as we: self.finished.emit([], f"Error Word→PDF: {we}"); return
-                finally: comtypes.CoUninitialize()
-            self.status.emit("Renderizando páginas…"); self.progress.emit(50)
-            d = fitz.open(pdf); pages = []; tot = len(d)
+                    from actions.student_mode import convert_file
+                    pdf = convert_file(self.file_path, "pdf")
+                    temp_pdf = pdf
+                except Exception as we:
+                    self.finished.emit([], f"Error Word→PDF: {we}")
+                    return
+            self.status.emit("Renderizando páginas…")
+            self.progress.emit(50)
+            d = fitz.open(pdf)
+            pages = []
+            tot = len(d)
             for i in range(tot):
-                self.status.emit(f"Página {i+1}/{tot}…"); p = d.load_page(i); pix = p.get_pixmap(dpi=120)
-                qi = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy(); pages.append(qi)
+                self.status.emit(f"Página {i + 1}/{tot}…")
+                p = d.load_page(i)
+                pix = p.get_pixmap(dpi=120)
+                qi = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
+                pages.append(qi)
                 self.progress.emit(50 + int((i + 1) / tot * 40))
             d.close()
             if temp_pdf and os.path.exists(temp_pdf):
-                try: os.remove(temp_pdf)
-                except: pass
-            self.progress.emit(100); self.finished.emit(pages, "")
-        except Exception as e: self.finished.emit([], f"Error: {e}")
-
-
-class PdfToWordWorker(QThread):
-    progress = pyqtSignal(int); status = pyqtSignal(str); finished = pyqtSignal(str)
-    def __init__(self, pp, dp): super().__init__(); self.pdf_path = pp; self.docx_path = dp
-    def run(self):
-        try:
-            self.status.emit("Iniciando…"); self.progress.emit(20)
-            from pdf2docx import Converter; cv = Converter(self.pdf_path)
-            self.status.emit("Reconstruyendo…"); self.progress.emit(50)
-            cv.convert(self.docx_path); cv.close(); self.progress.emit(100)
-            self.finished.emit(f"Éxito: guardado en '{self.docx_path}'")
+                try:
+                    os.remove(temp_pdf)
+                except Exception:
+                    pass
+            self.progress.emit(100)
+            self.finished.emit(pages, "")
         except Exception as e:
-            try:
-                from docx import Document
-                from actions.student_mode import extract_text
-                txt = extract_text(self.pdf_path)
-                doc = Document(); doc.add_paragraph(txt); doc.save(self.docx_path)
-                self.progress.emit(100); self.finished.emit(f"Guardado (fallback) en '{self.docx_path}'")
-            except Exception as e2: self.finished.emit(f"Error: {e}\nFallback: {e2}")
+            self.finished.emit([], f"Error: {e}")
 
 
-class QualityReportWorker(QThread):
-    status = pyqtSignal(str); finished = pyqtSignal(str)
-    def __init__(self, text, filename): super().__init__(); self.text = text; self.filename = filename
+class ConversionWorker(QThread):
+    """Worker genérico para el Convertidor Universal (PDF/Word/Excel/PowerPoint/TXT/CSV)."""
+    progress = pyqtSignal(int)
+    status = pyqtSignal(str)
+    finished = pyqtSignal(str, str)  # (ruta_destino, error)
+
+    def __init__(self, source_path, target_format):
+        super().__init__()
+        self.source_path = source_path
+        self.target_format = target_format
+
     def run(self):
         try:
-            self.status.emit("Llamando a Artemisa…")
-            from memory.config_manager import load_api_keys; cfg = load_api_keys()
-            from google import genai; client = genai.Client(api_key=cfg.get("gemini_api_key", ""))
-            prompt = (f"Actúa como revisor académico senior. Analiza el texto del documento '{self.filename}' y genera un REPORTE DE CALIDAD en HTML estilizado con fondo oscuro. Sin bloques markdown.\n\nTEXTO:\n\n{self.text[:9000]}")
-            resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-            html = resp.text.strip()
-            if html.startswith("```"):
-                lines = html.split("\n"); lines = lines[1:] if lines[0].startswith("```") else lines
-                if lines[-1].startswith("```"): lines = lines[:-1]
-                html = "\n".join(lines).strip()
-            self.finished.emit(html)
-        except Exception as e: self.finished.emit(f"<div style='color:#ff3b30;'>Error: {e}</div>")
+            def _cb(status, pct):
+                self.status.emit(status)
+                self.progress.emit(pct)
+            dest = convert_file(self.source_path, self.target_format, progress_cb=_cb)
+            self.finished.emit(dest, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
+
+
+class ParaphraseWorker(QThread):
+    status = pyqtSignal(str)
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(str, str)  # (resultado, error)
+
+    def __init__(self, text, intensity):
+        super().__init__()
+        self.text = text
+        self.intensity = intensity
+
+    def run(self):
+        try:
+            def _cb(status, pct):
+                self.status.emit(status)
+                self.progress.emit(pct)
+            result = paraphrase_text(self.text, intensity=self.intensity, progress_cb=_cb)
+            self.finished.emit(result, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
+
+
+class GrammarWorker(QThread):
+    status = pyqtSignal(str)
+    finished = pyqtSignal(str, str)
+
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
+
+    def run(self):
+        try:
+            self.status.emit("Analizando ortografía y gramática…")
+            html = check_grammar_and_style(self.text)
+            self.finished.emit(html, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
 
 
 class ApaVerifyWorker(QThread):
-    status = pyqtSignal(str); progress = pyqtSignal(int); finished = pyqtSignal(str)
-    def __init__(self, text, file_path): super().__init__(); self.text = text; self.file_path = file_path
+    status = pyqtSignal(str)
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(str)
+
+    def __init__(self, text, file_path):
+        super().__init__()
+        self.text = text
+        self.file_path = file_path
+
     def run(self):
         try:
-            self.status.emit("Iniciando…"); self.progress.emit(10)
-            from memory.config_manager import load_api_keys; cfg = load_api_keys()
-            from google import genai; client = genai.Client(api_key=cfg.get("gemini_api_key", ""))
-            pil_images = []
-            if self.file_path:
-                try:
-                    import fitz; from PIL import Image
-                    pdf = self.file_path; tmp = None
-                    ext = os.path.splitext(self.file_path)[1].lower()
-                    if ext == ".docx":
-                        import comtypes.client; comtypes.CoInitialize()
-                        try:
-                            w = comtypes.client.CreateObject("Word.Application"); w.Visible = False
-                            doc = w.Documents.Open(os.path.abspath(self.file_path))
-                            tmp = os.path.join(os.path.dirname(self.file_path), "_tmp_apa_.pdf")
-                            doc.SaveAs(os.path.abspath(tmp), FileFormat=17); doc.Close(); w.Quit(); pdf = tmp
-                        finally: comtypes.CoUninitialize()
-                    d = fitz.open(pdf)
-                    for i in range(min(2, len(d))):
-                        p = d.load_page(i); pix = p.get_pixmap(dpi=120)
-                        pil_images.append(Image.frombytes("RGB", [pix.width, pix.height], pix.samples))
-                    d.close()
-                    if tmp and os.path.exists(tmp): os.remove(tmp)
-                except Exception: pass
-            self.progress.emit(65); self.status.emit("Llamando a Artemisa…")
-            prompt = ("Actúa como experto en normas APA 7ma edición. Analiza el texto y las imágenes adjuntas. Devuelve un reporte estructurado.\n\nTEXTO:\n\n" + self.text)
-            contents = [prompt] + pil_images
-            resp = client.models.generate_content(model="gemini-2.5-flash", contents=contents)
-            self.progress.emit(100); self.finished.emit(resp.text.strip())
-        except Exception as e: self.finished.emit(f"Error: {e}")
+            def _cb(status, pct):
+                self.status.emit(status)
+                self.progress.emit(pct)
+            report = verify_apa_full(self.text, self.file_path, progress_cb=_cb)
+            self.finished.emit(report)
+        except Exception as e:
+            self.finished.emit(f"Error: {e}")
 
+
+class QualityReportWorker(QThread):
+    status = pyqtSignal(str)
+    finished = pyqtSignal(str)
+
+    def __init__(self, text, filename):
+        super().__init__()
+        self.text = text
+        self.filename = filename
+
+    def run(self):
+        try:
+            self.status.emit("Llamando a Artemisa…")
+            from google import genai
+            from actions.student_mode import _get_api_key, GEMINI_MODEL, _clean_html_fences
+            client = genai.Client(api_key=_get_api_key())
+            prompt = (
+                "Actúa como revisor académico senior. Analiza el texto del documento "
+                f"'{self.filename}' y genera un REPORTE DE CALIDAD en HTML estilizado con fondo "
+                "oscuro. Incluye también errores de ortografía/gramática si los detectas. Sin "
+                "bloques markdown.\n\nTEXTO:\n\n" + self.text[:9000]
+            )
+            resp = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            self.finished.emit(_clean_html_fences(resp.text.strip()))
+        except Exception as e:
+            self.finished.emit(f"<div style='color:#ff3b30;'>Error: {e}</div>")
+
+
+class ConsultaWorker(QThread):
+    status = pyqtSignal(str)
+    finished = pyqtSignal(str, str)  # (respuesta_html, error)
+
+    def __init__(self, question, mode, history):
+        super().__init__()
+        self.question = question
+        self.mode = mode
+        self.history = history
+
+    def run(self):
+        try:
+            def _cb(status, pct):
+                self.status.emit(status)
+            answer = ask_consulta(self.question, mode=self.mode, history=self.history, progress_cb=_cb)
+            self.finished.emit(answer, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
+
+
+class TranslateWorker(QThread):
+    status = pyqtSignal(str)
+    finished = pyqtSignal(str, str)
+
+    def __init__(self, text, source_lang, target_lang):
+        super().__init__()
+        self.text = text
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+
+    def run(self):
+        try:
+            def _cb(status, pct):
+                self.status.emit(status)
+            result = translate_text(self.text, self.source_lang, self.target_lang, progress_cb=_cb)
+            self.finished.emit(result, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  StudentModeWindow — 6 pestañas
+# ═══════════════════════════════════════════════════════════════════════════
 
 class StudentModeWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("NEXUS — Herramientas Académicas")
-        self.resize(850, 600); self.setMinimumSize(800, 550)
+        self.resize(980, 680)
+        self.setMinimumSize(880, 600)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.loaded_quality_text = ""; self.loaded_quality_file = ""; self.loaded_apa_file = ""
-        self.drag_pos = None; self.init_ui()
 
+        self.loaded_apa_file = ""
+        self.loaded_quality_text = ""
+        self.loaded_quality_file = ""
+        self.loaded_conversion_file = ""
+        self.consulta_history = []
+        self.drag_pos = None
+        self.init_ui()
+
+    # ── Drag de ventana sin bordes ──────────────────────────────────────
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton: self.drag_pos = e.globalPosition().toPoint()
-    def mouseMoveEvent(self, e):
-        if self.drag_pos: self.move(self.pos() + e.globalPosition().toPoint() - self.drag_pos); self.drag_pos = e.globalPosition().toPoint()
-    def mouseReleaseEvent(self, e): self.drag_pos = None
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.drag_pos = e.globalPosition().toPoint()
 
+    def mouseMoveEvent(self, e):
+        if self.drag_pos:
+            self.move(self.pos() + e.globalPosition().toPoint() - self.drag_pos)
+            self.drag_pos = e.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, e):
+        self.drag_pos = None
+
+    # ── UI principal ─────────────────────────────────────────────────────
     def init_ui(self):
-        ml = QVBoxLayout(self); ml.setContentsMargins(12, 12, 12, 12)
-        bg = QFrame(self); bg.setObjectName("StuBg")
-        try:
-            from memory.config_manager import load_api_keys
-            is_glass = load_api_keys().get("student_glass_mode", True)
-        except: is_glass = True
-        bg.setStyleSheet(f"QFrame#StuBg{{{'background:rgba(15,23,42,0.85);' if is_glass else 'background:rgb(15,23,42);'}border:1px solid rgba(255,255,255,0.10);border-radius:12px;}}")
-        bl = QVBoxLayout(bg); bl.setContentsMargins(15, 15, 15, 15); ml.addWidget(bg)
+        ml = QVBoxLayout(self)
+        ml.setContentsMargins(12, 12, 12, 12)
+        bg = QFrame(self)
+        bg.setObjectName("StuBg")
+        bg.setStyleSheet(
+            "QFrame#StuBg{background:rgba(15,23,42,0.90);border:1px solid rgba(255,255,255,0.10);border-radius:12px;}"
+        )
+        bl = QVBoxLayout(bg)
+        bl.setContentsMargins(15, 15, 15, 15)
+        ml.addWidget(bg)
+
         hdr = QHBoxLayout()
         ic = QLabel()
-        if HAS_QTA: ic.setPixmap(qta.icon("fa5s.graduation-cap", color=C_PRI).pixmap(28, 28))
+        if HAS_QTA:
+            ic.setPixmap(qta.icon("fa5s.graduation-cap", color=C_PRI).pixmap(28, 28))
         hdr.addWidget(ic)
-        tl = QLabel(" MODO ESTUDIANTE"); tl.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        tl.setStyleSheet(f"color:{C_PRI};letter-spacing:1px;"); hdr.addWidget(tl); hdr.addStretch()
-        for txt, fn in [("-", self.showMinimized), ("X", self.close)]:
-            b = QPushButton(txt); b.setFixedSize(28, 28)
+        tl = QLabel(" MODO ESTUDIANTE")
+        tl.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        tl.setStyleSheet(f"color:{C_PRI};letter-spacing:1px;")
+        hdr.addWidget(tl)
+        hdr.addStretch()
+        for txt, fn in [("–", self.showMinimized), ("×", self.close)]:
+            b = QPushButton(txt)
+            b.setFixedSize(28, 28)
             b.setStyleSheet("QPushButton{border:none;}QPushButton:hover{background:rgba(255,255,255,0.12);border-radius:14px;}")
-            b.clicked.connect(fn); hdr.addWidget(b)
+            b.clicked.connect(fn)
+            hdr.addWidget(b)
         bl.addLayout(hdr)
-        self.tabs = QTabWidget(); bl.addWidget(self.tabs)
-        # Tab Ghost
-        tg = QWidget(); gl = QVBoxLayout(tg); gl.setContentsMargins(12, 12, 12, 12)
-        gl.addWidget(QLabel("Texto a parafrasear:"))
-        sp = QHBoxLayout(); self.ghost_input = QTextEdit(); self.ghost_input.setPlaceholderText("Texto original…")
-        self.ghost_output = QTextEdit(); self.ghost_output.setPlaceholderText("Resultado…"); self.ghost_output.setReadOnly(True)
-        sp.addWidget(self.ghost_input); sp.addWidget(self.ghost_output); gl.addLayout(sp)
-        self.btn_ghost_run = QPushButton(" Parafrasear"); self.btn_ghost_run.clicked.connect(self.trigger_paraphrase_manually); gl.addWidget(self.btn_ghost_run)
-        self.tabs.addTab(tg, qta.icon("fa5s.ghost", color=C_PRI) if HAS_QTA else QIcon(), "Parafraseo")
-        # Tab PDF→Word
-        tp = QWidget(); pl = QVBoxLayout(tp); pl.setContentsMargins(20, 20, 20, 20); pl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pdf_file_label = QLabel("Ningún archivo"); self.pdf_file_label.setAlignment(Qt.AlignmentFlag.AlignCenter); pl.addWidget(self.pdf_file_label)
-        self.btn_pdf_convert = QPushButton(" Seleccionar PDF y Convertir"); self.btn_pdf_convert.setMinimumHeight(42); self.btn_pdf_convert.clicked.connect(self.select_pdf_manually); pl.addWidget(self.btn_pdf_convert)
-        self.pdf_progress = QProgressBar(); self.pdf_progress.setRange(0, 100); self.pdf_progress.setFixedHeight(10)
-        self.pdf_progress.setStyleSheet(f"QProgressBar{{background:rgba(255,255,255,0.10);border:none;border-radius:5px;}}QProgressBar::chunk{{background:{C_PRI};border-radius:5px;}}")
-        pl.addWidget(self.pdf_progress)
-        self.pdf_status_label = QLabel("Esperando…"); self.pdf_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); pl.addWidget(self.pdf_status_label)
-        self.tabs.addTab(tp, qta.icon("fa5s.file-word", color=C_PRI) if HAS_QTA else QIcon(), "PDF→Word")
-        # Tab APA
-        ta = QWidget(); al = QVBoxLayout(ta); al.setContentsMargins(12, 12, 12, 12)
-        ah = QHBoxLayout(); ah.addWidget(QLabel("Verificador APA 7 Visual")); ah.addStretch()
-        self.btn_apa_load = QPushButton(" Cargar Doc"); self.btn_apa_load.clicked.connect(self.load_apa_file_manually); ah.addWidget(self.btn_apa_load)
-        al.addLayout(ah)
-        self.apa_viewer = QScrollArea(); self.apa_viewer.setWidgetResizable(True)
-        avc = QWidget(); avc.setStyleSheet("background:rgba(20,20,20,0.95);")
-        self.apa_viewer_layout = QVBoxLayout(avc); self.apa_viewer_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.apa_placeholder = QLabel("Carga un PDF/DOCX para ver la vista previa"); self.apa_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.apa_viewer_layout.addWidget(self.apa_placeholder); self.apa_viewer.setWidget(avc)
-        asplit = QHBoxLayout(); asplit.addWidget(self.apa_viewer)
-        self.apa_output = QTextEdit(); self.apa_output.setReadOnly(True); asplit.addWidget(self.apa_output); al.addLayout(asplit)
-        abl = QHBoxLayout()
-        self.btn_apa_run = QPushButton(" Verificar APA 7"); self.btn_apa_run.clicked.connect(self.trigger_apa_manually); abl.addWidget(self.btn_apa_run)
-        self.btn_apa_download = QPushButton(" Descargar"); self.btn_apa_download.clicked.connect(self.download_apa_report); self.btn_apa_download.setEnabled(False); abl.addWidget(self.btn_apa_download)
-        al.addLayout(abl)
-        self.tabs.addTab(ta, qta.icon("fa5s.book", color=C_PRI) if HAS_QTA else QIcon(), "APA 7")
-        # Tab Calidad
-        tq = QWidget(); ql = QVBoxLayout(tq); ql.setContentsMargins(12, 12, 12, 12)
-        qh = QHBoxLayout(); qh.addWidget(QLabel("Evaluador de Rigor Académico")); qh.addStretch()
-        self.btn_q_load = QPushButton(" Cargar Doc"); self.btn_q_load.clicked.connect(self.load_quality_file_manually); qh.addWidget(self.btn_q_load)
-        ql.addLayout(qh)
-        self.quality_file_label = QLabel("Ningún archivo"); ql.addWidget(self.quality_file_label)
-        self.quality_output = QTextBrowser(); self.quality_output.setStyleSheet("background:rgba(20,20,20,0.95);border:1px solid rgba(255,255,255,0.10);border-radius:8px;"); ql.addWidget(self.quality_output)
-        qbl = QHBoxLayout()
-        self.btn_q_run = QPushButton(" Generar Reporte"); self.btn_q_run.clicked.connect(self.run_quality_report_manually); self.btn_q_run.setEnabled(False); qbl.addWidget(self.btn_q_run)
-        self.btn_q_download = QPushButton(" Descargar HTML"); self.btn_q_download.clicked.connect(self.download_quality_report); self.btn_q_download.setEnabled(False); qbl.addWidget(self.btn_q_download)
-        ql.addLayout(qbl)
-        self.tabs.addTab(tq, qta.icon("fa5s.award", color=C_PRI) if HAS_QTA else QIcon(), "Calidad")
-        # Status bar
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine); bl.addWidget(sep)
-        sbr = QHBoxLayout(); sbr.setContentsMargins(8, 2, 8, 2)
-        self.global_status_label = QLabel("Estado: Listo"); self.global_status_label.setStyleSheet(f"color:{C_TEXT};font-size:11px;"); sbr.addWidget(self.global_status_label); sbr.addStretch()
-        self.global_progress_bar = QProgressBar(); self.global_progress_bar.setRange(0, 100); self.global_progress_bar.setFixedSize(180, 10)
-        self.global_progress_bar.setStyleSheet(f"QProgressBar{{background:rgba(0,0,0,0.4);border:1px solid {C_BORDER};border-radius:4px;}}QProgressBar::chunk{{background:{C_PRI};border-radius:4px;}}")
-        sbr.addWidget(self.global_progress_bar); bl.addLayout(sbr)
+
+        self.tabs = QTabWidget()
+        bl.addWidget(self.tabs)
+
+        self._build_tab_paraphrase()
+        self._build_tab_converter()
+        self._build_tab_apa()
+        self._build_tab_quality()
+        self._build_tab_consulta()
+        self._build_tab_translate()
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        bl.addWidget(sep)
+        sbr = QHBoxLayout()
+        sbr.setContentsMargins(8, 2, 8, 2)
+        self.global_status_label = QLabel("Estado: Listo")
+        self.global_status_label.setStyleSheet(f"color:{C_TEXT};font-size:11px;")
+        sbr.addWidget(self.global_status_label)
+        sbr.addStretch()
+        self.global_progress_bar = QProgressBar()
+        self.global_progress_bar.setRange(0, 100)
+        self.global_progress_bar.setFixedSize(200, 10)
+        self.global_progress_bar.setStyleSheet(
+            f"QProgressBar{{background:rgba(0,0,0,0.4);border:1px solid {C_BORDER};border-radius:4px;}}"
+            f"QProgressBar::chunk{{background:{C_PRI};border-radius:4px;}}"
+        )
+        sbr.addWidget(self.global_progress_bar)
+        bl.addLayout(sbr)
+
         self.update_style()
+    
 
     def update_style(self):
         self.setStyleSheet(f"""
         QLabel{{color:{C_TEXT};font-family:'Segoe UI';}}
         QPushButton{{background:{C_PRI_DIM};color:{C_TEXT};border:1px solid {C_BORDER};border-radius:8px;padding:8px;font-weight:bold;}}
-        QPushButton:hover{{background:{C_PRI};color:#0f0a02;}}
+        QPushButton:hoveSr{{background:{C_PRI};color:#0f0a02;}}
         QPushButton:disabled{{background:rgba(128,128,128,0.1);color:rgba(255,255,255,0.3);border:1px solid rgba(128,128,128,0.2);}}
-        QTextEdit,QTextBrowser{{background:rgba(0,0,0,0.6);color:#fff;border:1px solid {C_BORDER};border-radius:8px;font-family:'Consolas';font-size:13px;}}
-        QTabWidget::pane{{border:1px solid {C_BORDER};border-radius:10px;background:rgba(22,16,5,0.4);}}
+        QTextEdit,QTextBrowser,QLineEdit{{background:rgba(0,0,0,0.6);color:#fff;border:1px solid {C_BORDER};border-radius:8px;font-family:'Consolas';font-size:13px;padding:6px;}}
+        QComboBox{{background:rgba(0,0,0,0.5);color:#fff;border:1px solid {C_BORDER};border-radius:8px;padding:6px;}}
+        QComboBox QAbstractItemView{{background:rgb(20,20,28);color:#fff;selection-background-color:{C_PRI_DIM};}}
+        QTabWidget::pane{{border:1px solid {C_BORDER};border-radius:10px;background:rgba(22,16,5,0.25);}}
         QTabBar::tab{{background:rgba(35,28,10,0.6);color:{C_TEXT};padding:10px 16px;border-radius:6px;border:1px solid {C_BORDER};margin-right:4px;}}
         QTabBar::tab:selected{{background:{C_PRI_DIM};border-bottom:2px solid {C_PRI};font-weight:bold;}}
         QScrollArea{{background:rgba(0,0,0,0.5);border:1px solid {C_BORDER};border-radius:8px;}}
         """)
         apply_glass_shadow(self)
 
-    def select_pdf_manually(self):
-        from PyQt6.QtWidgets import QFileDialog
-        pp, _ = QFileDialog.getOpenFileName(self, "Seleccionar PDF", "", "PDF (*.pdf)")
-        if not pp: return
-        dp = str(Path(pp).with_suffix(".docx"))
-        self.pdf_file_label.setText(f"Archivo: {pp}"); self.btn_pdf_convert.setEnabled(False); self.pdf_progress.setValue(0)
-        self.pdf_status_label.setText("Iniciando…")
-        self.pdf_worker = PdfToWordWorker(pp, dp)
-        self.pdf_worker.progress.connect(self.pdf_progress.setValue); self.pdf_worker.status.connect(self.pdf_status_label.setText)
-        self.pdf_worker.finished.connect(self.pdf_conversion_finished); self.pdf_worker.start()
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 1 — Parafraseo
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_paraphrase(self):
+        tg = QWidget()
+        gl = QVBoxLayout(tg)
+        gl.setContentsMargins(12, 12, 12, 12)
 
-    def pdf_conversion_finished(self, msg):
-        self.btn_pdf_convert.setEnabled(True); self.pdf_status_label.setText("Completado.")
-        if "Error" in msg: QMessageBox.critical(self, "Error", msg)
-        else: QMessageBox.information(self, "Éxito", msg)
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Intensidad:"))
+        self.cmb_paraphrase_intensity = QComboBox()
+        self.cmb_paraphrase_intensity.addItems(["ligero", "moderado", "intenso"])
+        self.cmb_paraphrase_intensity.setCurrentText("moderado")
+        top_row.addWidget(self.cmb_paraphrase_intensity)
+        top_row.addStretch()
+        self.btn_ghost_load_file = QPushButton(" Cargar desde archivo")
+        if HAS_QTA:
+            self.btn_ghost_load_file.setIcon(qta.icon("fa5s.file-import", color=C_TEXT))
+        self.btn_ghost_load_file.clicked.connect(self._ghost_load_file)
+        top_row.addWidget(self.btn_ghost_load_file)
+        gl.addLayout(top_row)
+
+        gl.addWidget(QLabel("Texto original:"))
+        sp = QHBoxLayout()
+        self.ghost_input = QTextEdit()
+        self.ghost_input.setPlaceholderText("Pega aquí el texto original o carga un archivo…")
+        self.ghost_output = QTextEdit()
+        self.ghost_output.setPlaceholderText("Resultado parafraseado…")
+        self.ghost_output.setReadOnly(True)
+        sp.addWidget(self.ghost_input)
+        sp.addWidget(self.ghost_output)
+        gl.addLayout(sp)
+
+        btn_row = QHBoxLayout()
+        self.btn_ghost_run = QPushButton(" Parafrasear")
+        if HAS_QTA:
+            self.btn_ghost_run.setIcon(qta.icon("fa5s.ghost", color=C_TEXT))
+        self.btn_ghost_run.clicked.connect(self.trigger_paraphrase_manually)
+        btn_row.addWidget(self.btn_ghost_run)
+        self.btn_ghost_copy = QPushButton(" Copiar resultado")
+        self.btn_ghost_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.ghost_output.toPlainText()))
+        btn_row.addWidget(self.btn_ghost_copy)
+        gl.addLayout(btn_row)
+
+        self.tabs.addTab(tg, qta.icon("fa5s.ghost", color=C_PRI) if HAS_QTA else QIcon(), "Parafraseo")
+
+    def _ghost_load_file(self):
+        from PyQt6.QtWidgets import QFileDialog
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Cargar archivo", "", "Documentos (*.txt *.docx *.pdf *.xlsx *.pptx)"
+        )
+        if not fp:
+            return
+        text = extract_text(fp)
+        if text.startswith("[Error"):
+            QMessageBox.critical(self, "Error", text)
+            return
+        self.ghost_input.setPlainText(text)
 
     def trigger_paraphrase_manually(self):
         text = self.ghost_input.toPlainText().strip()
-        if not text: return
-        self.ghost_output.setPlainText("Procesando…"); self.btn_ghost_run.setEnabled(False)
-        def run_api():
-            try:
-                from memory.config_manager import load_api_keys; cfg = load_api_keys()
-                from google import genai; client = genai.Client(api_key=cfg.get("gemini_api_key", ""))
-                prompt = "Actúa como reescritor académico sofisticado. Reescribe el texto evadiendo detectores de IA.\n\n"
-                resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt + text)
-                return resp.text.strip()
-            except Exception as e: return f"Error: {e}"
-        class W(QThread):
-            res = pyqtSignal(str)
-            def run(self): self.res.emit(run_api())
-        self.para_worker = W(); self.para_worker.res.connect(self.paraphrase_finished); self.para_worker.start()
+        if not text:
+            return
+        self.ghost_output.setPlainText("Procesando…")
+        self.btn_ghost_run.setEnabled(False)
+        intensity = self.cmb_paraphrase_intensity.currentText()
+        self.paraphrase_worker = ParaphraseWorker(text, intensity)
+        self.paraphrase_worker.status.connect(self.global_status_label.setText)
+        self.paraphrase_worker.progress.connect(self.global_progress_bar.setValue)
+        self.paraphrase_worker.finished.connect(self._paraphrase_finished)
+        self.paraphrase_worker.start()
 
-    def paraphrase_finished(self, result):
-        self.ghost_output.setPlainText(result); self.btn_ghost_run.setEnabled(True)
+    def _paraphrase_finished(self, result, error):
+        self.btn_ghost_run.setEnabled(True)
+        if error:
+            self.ghost_output.setPlainText(f"Error: {error}")
+            QMessageBox.critical(self, "Error", error)
+        else:
+            self.ghost_output.setPlainText(result)
+            self.global_status_label.setText("Parafraseo completado.")
+
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 2 — Convertidor Universal
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_converter(self):
+        tc = QWidget()
+        cl = QVBoxLayout(tc)
+        cl.setContentsMargins(20, 20, 20, 20)
+        cl.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        cl.addWidget(QLabel("Convierte entre Word, Excel, PowerPoint, PDF, TXT y CSV."))
+
+        row1 = QHBoxLayout()
+        self.conv_file_label = QLabel("Ningún archivo seleccionado")
+        self.conv_file_label.setWordWrap(True)
+        row1.addWidget(self.conv_file_label, 1)
+        self.btn_conv_select = QPushButton(" Seleccionar archivo")
+        if HAS_QTA:
+            self.btn_conv_select.setIcon(qta.icon("fa5s.file-upload", color=C_TEXT))
+        self.btn_conv_select.clicked.connect(self._conv_select_file)
+        row1.addWidget(self.btn_conv_select)
+        cl.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Convertir a:"))
+        self.cmb_conv_target = QComboBox()
+        self.cmb_conv_target.setEnabled(False)
+        row2.addWidget(self.cmb_conv_target)
+        row2.addStretch()
+        self.btn_conv_run = QPushButton(" Convertir")
+        if HAS_QTA:
+            self.btn_conv_run.setIcon(qta.icon("fa5s.exchange-alt", color=C_TEXT))
+        self.btn_conv_run.setEnabled(False)
+        self.btn_conv_run.clicked.connect(self._run_conversion)
+        row2.addWidget(self.btn_conv_run)
+        cl.addLayout(row2)
+
+        self.conv_progress = QProgressBar()
+        self.conv_progress.setRange(0, 100)
+        self.conv_progress.setFixedHeight(10)
+        self.conv_progress.setStyleSheet(
+            f"QProgressBar{{background:rgba(255,255,255,0.10);border:none;border-radius:5px;}}"
+            f"QProgressBar::chunk{{background:{C_PRI};border-radius:5px;}}"
+        )
+        cl.addWidget(self.conv_progress)
+
+        self.conv_status_label = QLabel("Esperando…")
+        cl.addWidget(self.conv_status_label)
+
+        self.btn_conv_open_folder = QPushButton(" Abrir carpeta del resultado")
+        self.btn_conv_open_folder.setEnabled(False)
+        self.btn_conv_open_folder.clicked.connect(self._conv_open_folder)
+        cl.addWidget(self.btn_conv_open_folder)
+
+        note = QLabel(
+            "Nota: las conversiones hacia PDF de Word/Excel/PowerPoint requieren tener Office "
+            "instalado en este equipo (usan automatización COM, igual que el resto de NEXUS)."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color:rgba(255,255,255,0.45);font-size:11px;font-style:italic;")
+        cl.addWidget(note)
+        cl.addStretch()
+
+        self.tabs.addTab(tc, qta.icon("fa5s.file-export", color=C_PRI) if HAS_QTA else QIcon(), "Convertidor")
+
+    def _conv_select_file(self):
+        from PyQt6.QtWidgets import QFileDialog
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar archivo",
+            "", "Documentos (*.pdf *.docx *.doc *.xlsx *.xls *.pptx *.ppt *.txt *.csv)"
+        )
+        if not fp:
+            return
+        self.loaded_conversion_file = fp
+        self.conv_file_label.setText(f"Archivo: {fp}")
+        targets = get_available_targets(fp)
+        self.cmb_conv_target.clear()
+        if targets:
+            self.cmb_conv_target.addItems(targets)
+            self.cmb_conv_target.setEnabled(True)
+            self.btn_conv_run.setEnabled(True)
+        else:
+            self.cmb_conv_target.setEnabled(False)
+            self.btn_conv_run.setEnabled(False)
+            QMessageBox.warning(self, "Sin conversiones", "No hay formatos de destino soportados para este archivo.")
+        self.btn_conv_open_folder.setEnabled(False)
+
+    def _run_conversion(self):
+        if not self.loaded_conversion_file:
+            return
+        target = self.cmb_conv_target.currentText()
+        self.btn_conv_run.setEnabled(False)
+        self.conv_progress.setValue(0)
+        self.conv_status_label.setText("Iniciando…")
+        self.conv_worker = ConversionWorker(self.loaded_conversion_file, target)
+        self.conv_worker.status.connect(self.conv_status_label.setText)
+        self.conv_worker.progress.connect(self.conv_progress.setValue)
+        self.conv_worker.finished.connect(self._conversion_finished)
+        self.conv_worker.start()
+
+    def _conversion_finished(self, dest, error):
+        self.btn_conv_run.setEnabled(True)
+        if error:
+            self.conv_status_label.setText("Error.")
+            QMessageBox.critical(self, "Error de conversión", error)
+            return
+        self._last_conversion_dest = dest
+        self.conv_status_label.setText(f"Completado: {dest}")
+        self.btn_conv_open_folder.setEnabled(True)
+        QMessageBox.information(self, "Éxito", f"Archivo generado:\n{dest}")
+
+    def _conv_open_folder(self):
+        import os
+        dest = getattr(self, "_last_conversion_dest", "")
+        if dest and os.path.exists(dest):
+            os.startfile(os.path.dirname(dest))
+
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 3 — APA 7 (con vista previa y búsqueda de errores)
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_apa(self):
+        ta = QWidget()
+        al = QVBoxLayout(ta)
+        al.setContentsMargins(12, 12, 12, 12)
+
+        ah = QHBoxLayout()
+        ah.addWidget(QLabel("Verificador APA 7 (formato + citas + ortografía)"))
+        ah.addStretch()
+        self.btn_apa_load = QPushButton(" Cargar Doc")
+        self.btn_apa_load.clicked.connect(self.load_apa_file_manually)
+        ah.addWidget(self.btn_apa_load)
+        al.addLayout(ah)
+
+        self.apa_viewer = QScrollArea()
+        self.apa_viewer.setWidgetResizable(True)
+        avc = QWidget()
+        avc.setStyleSheet("background:rgba(20,20,20,0.95);")
+        self.apa_viewer_layout = QVBoxLayout(avc)
+        self.apa_viewer_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.apa_placeholder = QLabel("Carga un PDF/DOCX para ver la vista previa")
+        self.apa_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.apa_viewer_layout.addWidget(self.apa_placeholder)
+        self.apa_viewer.setWidget(avc)
+
+        asplit = QHBoxLayout()
+        asplit.addWidget(self.apa_viewer)
+        self.apa_output = QTextBrowser()
+        asplit.addWidget(self.apa_output)
+        al.addLayout(asplit)
+
+        abl = QHBoxLayout()
+        self.btn_apa_run = QPushButton(" Verificar APA 7 completo")
+        self.btn_apa_run.clicked.connect(self.trigger_apa_manually)
+        abl.addWidget(self.btn_apa_run)
+        self.btn_apa_errors = QPushButton(" Buscar solo errores de ortografía/gramática")
+        self.btn_apa_errors.clicked.connect(self.trigger_apa_grammar_only)
+        abl.addWidget(self.btn_apa_errors)
+        self.btn_apa_download = QPushButton(" Descargar")
+        self.btn_apa_download.clicked.connect(self.download_apa_report)
+        self.btn_apa_download.setEnabled(False)
+        abl.addWidget(self.btn_apa_download)
+        al.addLayout(abl)
+
+        self.tabs.addTab(ta, qta.icon("fa5s.book", color=C_PRI) if HAS_QTA else QIcon(), "APA 7")
 
     def load_apa_file_manually(self):
         from PyQt6.QtWidgets import QFileDialog
         fp, _ = QFileDialog.getOpenFileName(self, "Cargar Doc", "", "Documentos (*.pdf *.docx)")
-        if not fp: return
-        self.loaded_apa_file = fp; self.global_status_label.setText("Cargando…")
-        self.btn_apa_load.setEnabled(False); self.btn_apa_run.setEnabled(False)
+        if not fp:
+            return
+        self.loaded_apa_file = fp
+        self.global_status_label.setText("Cargando vista previa…")
+        self.btn_apa_load.setEnabled(False)
+        self.btn_apa_run.setEnabled(False)
         self.render_worker = DocumentRenderWorker(fp)
         self.render_worker.status.connect(self.global_status_label.setText)
         self.render_worker.progress.connect(self.global_progress_bar.setValue)
-        self.render_worker.finished.connect(self.apa_file_rendered); self.render_worker.start()
+        self.render_worker.finished.connect(self.apa_file_rendered)
+        self.render_worker.start()
 
     def apa_file_rendered(self, pages, error):
-        self.btn_apa_load.setEnabled(True); self.btn_apa_run.setEnabled(True)
-        if error: QMessageBox.critical(self, "Error", error); return
+        self.btn_apa_load.setEnabled(True)
+        self.btn_apa_run.setEnabled(True)
+        if error:
+            QMessageBox.critical(self, "Error", error)
+            return
         while self.apa_viewer_layout.count():
-            it = self.apa_viewer_layout.takeAt(0); w = it.widget()
-            if w: w.deleteLater()
+            it = self.apa_viewer_layout.takeAt(0)
+            w = it.widget()
+            if w:
+                w.deleteLater()
         from PyQt6.QtGui import QPixmap
         for qi in pages:
-            l = QLabel(); l.setPixmap(QPixmap.fromImage(qi)); l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            l.setStyleSheet("border:1px solid rgba(245,158,11,0.45);border-radius:4px;background:white;margin:12px;padding:2px;")
+            l = QLabel()
+            l.setPixmap(QPixmap.fromImage(qi))
+            l.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            l.setStyleSheet(
+                "border:1px solid rgba(245,158,11,0.45);border-radius:4px;background:white;margin:12px;padding:2px;"
+            )
             self.apa_viewer_layout.addWidget(l)
-        self.global_status_label.setText("Documento cargado."); self.global_progress_bar.setValue(100)
+        self.global_status_label.setText("Documento cargado.")
+        self.global_progress_bar.setValue(100)
 
     def trigger_apa_manually(self):
-        if not self.loaded_apa_file: QMessageBox.warning(self, "Aviso", "Carga primero un documento."); return
-        self.apa_output.setPlainText("Analizando…"); self.btn_apa_run.setEnabled(False)
-        self.global_status_label.setText("Verificando APA 7…"); self.global_progress_bar.setValue(15)
-        self.apa_verify_worker = ApaVerifyWorker("", self.loaded_apa_file)
+        if not self.loaded_apa_file:
+            QMessageBox.warning(self, "Aviso", "Carga primero un documento.")
+            return
+        text = extract_text(self.loaded_apa_file)
+        self.apa_output.setPlainText("Analizando…")
+        self.btn_apa_run.setEnabled(False)
+        self.apa_verify_worker = ApaVerifyWorker(text, self.loaded_apa_file)
         self.apa_verify_worker.status.connect(self.global_status_label.setText)
         self.apa_verify_worker.progress.connect(self.global_progress_bar.setValue)
-        self.apa_verify_worker.finished.connect(self.apa_verification_finished); self.apa_verify_worker.start()
+        self.apa_verify_worker.finished.connect(self.apa_verification_finished)
+        self.apa_verify_worker.start()
 
     def apa_verification_finished(self, report):
-        self.apa_output.setPlainText(report); self.btn_apa_run.setEnabled(True)
-        if report.startswith("Error"): self.btn_apa_download.setEnabled(False)
-        else: self.global_status_label.setText("Reporte APA generado."); self.global_progress_bar.setValue(100); self.btn_apa_download.setEnabled(True)
+        self.apa_output.setPlainText(report)
+        self.btn_apa_run.setEnabled(True)
+        if report.startswith("Error"):
+            self.btn_apa_download.setEnabled(False)
+        else:
+            self.global_status_label.setText("Reporte APA generado.")
+            self.global_progress_bar.setValue(100)
+            self.btn_apa_download.setEnabled(True)
 
-    def load_quality_file_manually(self):
-        from PyQt6.QtWidgets import QFileDialog
-        fp, _ = QFileDialog.getOpenFileName(self, "Cargar Doc", "", "Documentos (*.txt *.pdf *.docx)")
-        if not fp: return
-        from actions.student_mode import extract_text
-        text = extract_text(fp)
-        if not text or text.startswith("[Error"): QMessageBox.critical(self, "Error", "No se pudo extraer texto."); return
-        self.loaded_quality_text = text; self.loaded_quality_file = fp
-        self.quality_file_label.setText(f"Archivo: {fp}"); self.btn_q_run.setEnabled(True)
+    def trigger_apa_grammar_only(self):
+        if not self.loaded_apa_file:
+            QMessageBox.warning(self, "Aviso", "Carga primero un documento.")
+            return
+        text = extract_text(self.loaded_apa_file)
+        self.apa_output.setPlainText("Buscando errores de ortografía y gramática…")
+        self.btn_apa_errors.setEnabled(False)
+        self.grammar_worker = GrammarWorker(text)
+        self.grammar_worker.status.connect(self.global_status_label.setText)
+        self.grammar_worker.finished.connect(self._apa_grammar_finished)
+        self.grammar_worker.start()
 
-    def run_quality_report_manually(self):
-        if not self.loaded_quality_text: return
-        self.btn_q_run.setEnabled(False); self.global_status_label.setText("Generando reporte…"); self.global_progress_bar.setValue(25)
-        self.quality_worker = QualityReportWorker(self.loaded_quality_text, Path(self.loaded_quality_file).name)
-        self.quality_worker.status.connect(lambda s: self.global_status_label.setText(f"Calidad: {s}"))
-        self.quality_worker.finished.connect(self.quality_report_finished); self.quality_worker.start()
-
-    def quality_report_finished(self, html):
-        self.btn_q_run.setEnabled(True); self.quality_output.setHtml(html)
-        if "Error" in html: self.global_progress_bar.setValue(0); self.btn_q_download.setEnabled(False)
-        else: self.global_status_label.setText("Reporte generado."); self.global_progress_bar.setValue(100); self.btn_q_download.setEnabled(True)
+    def _apa_grammar_finished(self, html, error):
+        self.btn_apa_errors.setEnabled(True)
+        if error:
+            QMessageBox.critical(self, "Error", error)
+            return
+        self.apa_output.setHtml(html)
+        self.btn_apa_download.setEnabled(True)
+        self.global_status_label.setText("Revisión de errores completada.")
 
     def download_apa_report(self):
         try:
-            from memory.config_manager import BASE_DIR; import time, os
-            d = os.path.join(BASE_DIR, "Descargas_Nexus"); os.makedirs(d, exist_ok=True)
-            fp = os.path.join(d, f"APA_{int(time.time())}.txt")
-            with open(fp, "w", encoding="utf-8") as f: f.write(self.apa_output.toPlainText())
-            QMessageBox.information(self, "OK", f"Guardado en:\n{d}"); os.startfile(d)
-        except Exception as e: QMessageBox.critical(self, "Error", str(e))
+            from memory.config_manager import BASE_DIR
+            import time, os
+            d = os.path.join(BASE_DIR, "Descargas_Nexus")
+            os.makedirs(d, exist_ok=True)
+            fp = os.path.join(d, f"APA_{int(time.time())}.html")
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(self.apa_output.toHtml())
+            QMessageBox.information(self, "OK", f"Guardado en:\n{d}")
+            os.startfile(d)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 4 — Calidad académica
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_quality(self):
+        tq = QWidget()
+        ql = QVBoxLayout(tq)
+        ql.setContentsMargins(12, 12, 12, 12)
+        qh = QHBoxLayout()
+        qh.addWidget(QLabel("Evaluador de Rigor Académico y Errores"))
+        qh.addStretch()
+        self.btn_q_load = QPushButton(" Cargar Doc")
+        self.btn_q_load.clicked.connect(self.load_quality_file_manually)
+        qh.addWidget(self.btn_q_load)
+        ql.addLayout(qh)
+        self.quality_file_label = QLabel("Ningún archivo")
+        ql.addWidget(self.quality_file_label)
+        self.quality_output = QTextBrowser()
+        self.quality_output.setStyleSheet(
+            "background:rgba(20,20,20,0.95);border:1px solid rgba(255,255,255,0.10);border-radius:8px;"
+        )
+        ql.addWidget(self.quality_output)
+        qbl = QHBoxLayout()
+        self.btn_q_run = QPushButton(" Generar Reporte")
+        self.btn_q_run.clicked.connect(self.run_quality_report_manually)
+        self.btn_q_run.setEnabled(False)
+        qbl.addWidget(self.btn_q_run)
+        self.btn_q_download = QPushButton(" Descargar HTML")
+        self.btn_q_download.clicked.connect(self.download_quality_report)
+        self.btn_q_download.setEnabled(False)
+        qbl.addWidget(self.btn_q_download)
+        ql.addLayout(qbl)
+        self.tabs.addTab(tq, qta.icon("fa5s.award", color=C_PRI) if HAS_QTA else QIcon(), "Calidad")
+
+    def load_quality_file_manually(self):
+        from PyQt6.QtWidgets import QFileDialog
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Cargar Doc", "", "Documentos (*.txt *.pdf *.docx *.xlsx *.pptx)"
+        )
+        if not fp:
+            return
+        text = extract_text(fp)
+        if not text or text.startswith("[Error"):
+            QMessageBox.critical(self, "Error", "No se pudo extraer texto.")
+            return
+        self.loaded_quality_text = text
+        self.loaded_quality_file = fp
+        self.quality_file_label.setText(f"Archivo: {fp}")
+        self.btn_q_run.setEnabled(True)
+
+    def run_quality_report_manually(self):
+        if not self.loaded_quality_text:
+            return
+        self.btn_q_run.setEnabled(False)
+        self.global_status_label.setText("Generando reporte…")
+        self.global_progress_bar.setValue(25)
+        from pathlib import Path
+        self.quality_worker = QualityReportWorker(self.loaded_quality_text, Path(self.loaded_quality_file).name)
+        self.quality_worker.status.connect(lambda s: self.global_status_label.setText(f"Calidad: {s}"))
+        self.quality_worker.finished.connect(self.quality_report_finished)
+        self.quality_worker.start()
+
+    def quality_report_finished(self, html):
+        self.btn_q_run.setEnabled(True)
+        self.quality_output.setHtml(html)
+        if "Error" in html:
+            self.global_progress_bar.setValue(0)
+            self.btn_q_download.setEnabled(False)
+        else:
+            self.global_status_label.setText("Reporte generado.")
+            self.global_progress_bar.setValue(100)
+            self.btn_q_download.setEnabled(True)
 
     def download_quality_report(self):
         try:
-            from memory.config_manager import BASE_DIR; import time, os
-            d = os.path.join(BASE_DIR, "Descargas_Nexus"); os.makedirs(d, exist_ok=True)
+            from memory.config_manager import BASE_DIR
+            import time, os
+            d = os.path.join(BASE_DIR, "Descargas_Nexus")
+            os.makedirs(d, exist_ok=True)
             fp = os.path.join(d, f"Calidad_{int(time.time())}.html")
-            with open(fp, "w", encoding="utf-8") as f: f.write(self.quality_output.toHtml())
-            QMessageBox.information(self, "OK", f"Guardado en:\n{d}"); os.startfile(d)
-        except Exception as e: QMessageBox.critical(self, "Error", str(e))
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(self.quality_output.toHtml())
+            QMessageBox.information(self, "OK", f"Guardado en:\n{d}")
+            os.startfile(d)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 5 — Consulta (pregúntame lo que sea)
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_consulta(self):
+        tk = QWidget()
+        kl = QVBoxLayout(tk)
+        kl.setContentsMargins(12, 12, 12, 12)
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Tipo de ayuda:"))
+        self.cmb_consulta_mode = QComboBox()
+        mode_labels = {
+            "general": "General",
+            "matematicas": "Matemáticas",
+            "investigacion": "Investigación",
+            "programacion": "Programación",
+            "ensayo": "Ensayo / Redacción",
+        }
+        for key, label in mode_labels.items():
+            self.cmb_consulta_mode.addItem(label, key)
+        top_row.addWidget(self.cmb_consulta_mode)
+        top_row.addStretch()
+        self.btn_consulta_attach = QPushButton(" Adjuntar archivo")
+        self.btn_consulta_attach.clicked.connect(self._consulta_attach_file)
+        top_row.addWidget(self.btn_consulta_attach)
+        self.btn_consulta_clear = QPushButton(" Nueva conversación")
+        self.btn_consulta_clear.clicked.connect(self._consulta_clear)
+        top_row.addWidget(self.btn_consulta_clear)
+        kl.addLayout(top_row)
+
+        self.consulta_output = QTextBrowser()
+        self.consulta_output.setStyleSheet(
+            "background:rgba(20,20,20,0.95);border:1px solid rgba(255,255,255,0.10);border-radius:8px;"
+        )
+        self.consulta_output.setPlaceholderText("Aquí aparecerán tus preguntas y respuestas…")
+        kl.addWidget(self.consulta_output, 1)
+
+        input_row = QHBoxLayout()
+        self.txt_consulta_input = QTextEdit()
+        self.txt_consulta_input.setPlaceholderText(
+            "Escribe tu tarea, pregunta, ejercicio de matemáticas, duda de investigación, código, etc…"
+        )
+        self.txt_consulta_input.setFixedHeight(90)
+        input_row.addWidget(self.txt_consulta_input, 1)
+        self.btn_consulta_ask = QPushButton(" Preguntar")
+        if HAS_QTA:
+            self.btn_consulta_ask.setIcon(qta.icon("fa5s.paper-plane", color=C_TEXT))
+        self.btn_consulta_ask.clicked.connect(self._trigger_consulta)
+        input_row.addWidget(self.btn_consulta_ask)
+        kl.addLayout(input_row)
+
+        self.tabs.addTab(tk, qta.icon("fa5s.comment-dots", color=C_PRI) if HAS_QTA else QIcon(), "Consulta")
+
+    def _consulta_attach_file(self):
+        from PyQt6.QtWidgets import QFileDialog
+        fp, _ = QFileDialog.getOpenFileName(
+            self, "Adjuntar archivo", "", "Documentos (*.txt *.pdf *.docx *.xlsx *.pptx)"
+        )
+        if not fp:
+            return
+        text = extract_text(fp)
+        if text.startswith("[Error"):
+            QMessageBox.critical(self, "Error", text)
+            return
+        current = self.txt_consulta_input.toPlainText().strip()
+        addition = f"\n\n[Contenido de {fp}]:\n{text[:6000]}"
+        self.txt_consulta_input.setPlainText((current + addition).strip())
+
+    def _consulta_clear(self):
+        self.consulta_history = []
+        self.consulta_output.clear()
+
+    def _trigger_consulta(self):
+        question = self.txt_consulta_input.toPlainText().strip()
+        if not question:
+            return
+        mode = self.cmb_consulta_mode.currentData()
+        self.consulta_output.append(
+            f"<div style='color:#7aeeff;font-weight:bold;margin-top:10px;'>Tú:</div><div>{question}</div>"
+        )
+        self.txt_consulta_input.clear()
+        self.btn_consulta_ask.setEnabled(False)
+        self.global_status_label.setText("Consultando a NEXUS…")
+        self.consulta_worker = ConsultaWorker(question, mode, self.consulta_history)
+        self.consulta_worker.status.connect(self.global_status_label.setText)
+        self.consulta_worker.finished.connect(lambda ans, err: self._consulta_finished(question, ans, err))
+        self.consulta_worker.start()
+
+    def _consulta_finished(self, question, answer, error):
+        self.btn_consulta_ask.setEnabled(True)
+        if error:
+            self.consulta_output.append(f"<div style='color:#ff3b30;'>Error: {error}</div>")
+            return
+        self.consulta_output.append(
+            f"<div style='color:{C_PRI};font-weight:bold;margin-top:6px;'>NEXUS:</div><div>{answer}</div>"
+        )
+        self.consulta_history.append({"q": question, "a": answer})
+        self.global_status_label.setText("Consulta respondida.")
+
+    # ─────────────────────────────────────────────────────────────────
+    #  TAB 6 — Traductor
+    # ─────────────────────────────────────────────────────────────────
+    def _build_tab_translate(self):
+        tt = QWidget()
+        tl = QVBoxLayout(tt)
+        tl.setContentsMargins(12, 12, 12, 12)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Desde:"))
+        self.cmb_trans_source = QComboBox()
+        self.cmb_trans_source.addItem("Auto-detectar")
+        self.cmb_trans_source.addItems(LANGUAGES)
+        row.addWidget(self.cmb_trans_source)
+
+        self.btn_trans_swap = QPushButton(" ⇄ ")
+        self.btn_trans_swap.setFixedWidth(50)
+        self.btn_trans_swap.clicked.connect(self._trans_swap_languages)
+        row.addWidget(self.btn_trans_swap)
+
+        row.addWidget(QLabel("Hacia:"))
+        self.cmb_trans_target = QComboBox()
+        self.cmb_trans_target.addItems(LANGUAGES)
+        self.cmb_trans_target.setCurrentText("Español")
+        row.addWidget(self.cmb_trans_target)
+        row.addStretch()
+        tl.addLayout(row)
+
+        split = QHBoxLayout()
+        self.txt_trans_input = QTextEdit()
+        self.txt_trans_input.setPlaceholderText("Escribe o pega el texto a traducir…")
+        self.txt_trans_output = QTextEdit()
+        self.txt_trans_output.setPlaceholderText("Traducción…")
+        self.txt_trans_output.setReadOnly(True)
+        split.addWidget(self.txt_trans_input)
+        split.addWidget(self.txt_trans_output)
+        tl.addLayout(split)
+
+        btn_row = QHBoxLayout()
+        self.btn_trans_run = QPushButton(" Traducir")
+        if HAS_QTA:
+            self.btn_trans_run.setIcon(qta.icon("fa5s.language", color=C_TEXT))
+        self.btn_trans_run.clicked.connect(self._trigger_translate)
+        btn_row.addWidget(self.btn_trans_run)
+        self.btn_trans_copy = QPushButton(" Copiar traducción")
+        self.btn_trans_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.txt_trans_output.toPlainText()))
+        btn_row.addWidget(self.btn_trans_copy)
+        tl.addLayout(btn_row)
+
+        self.tabs.addTab(tt, qta.icon("fa5s.globe", color=C_PRI) if HAS_QTA else QIcon(), "Traductor")
+
+    def _trans_swap_languages(self):
+        src = self.cmb_trans_source.currentText()
+        tgt = self.cmb_trans_target.currentText()
+        if src == "Auto-detectar":
+            return
+        idx_src = self.cmb_trans_source.findText(tgt)
+        idx_tgt = self.cmb_trans_target.findText(src)
+        if idx_src >= 0:
+            self.cmb_trans_source.setCurrentIndex(idx_src)
+        if idx_tgt >= 0:
+            self.cmb_trans_target.setCurrentIndex(idx_tgt)
+        self.txt_trans_input.setPlainText(self.txt_trans_output.toPlainText())
+
+    def _trigger_translate(self):
+        text = self.txt_trans_input.toPlainText().strip()
+        if not text:
+            return
+        source_lang = self.cmb_trans_source.currentText()
+        target_lang = self.cmb_trans_target.currentText()
+        self.txt_trans_output.setPlainText("Traduciendo…")
+        self.btn_trans_run.setEnabled(False)
+        self.translate_worker = TranslateWorker(text, source_lang, target_lang)
+        self.translate_worker.status.connect(self.global_status_label.setText)
+        self.translate_worker.finished.connect(self._translate_finished)
+        self.translate_worker.start()
+
+    def _translate_finished(self, result, error):
+        self.btn_trans_run.setEnabled(True)
+        if error:
+            self.txt_trans_output.setPlainText(f"Error: {error}")
+            QMessageBox.critical(self, "Error", error)
+            return
+        self.txt_trans_output.setPlainText(result)
+        self.global_status_label.setText("Traducción completada.")

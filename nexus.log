@@ -3,3 +3,45 @@
 [Supabase Client] Validación online completada: Licencia validada y registrada correctamente.
 [GitHub Updater] Error al buscar actualizaciones: 404 Client Error: Not Found for url: https://api.github.com/repos/santhiagocaro05-debug/I.L.U.M-ACTUALIZACI0NES/releases/latest
 [ORB] Loading sphere.html from: C:\Users\cuent\Documents\I.L.U.M-C0DE\assets\sphere.html
+[SoundManager] 11 sonidos cargados.
+[Sound] hover -> False guardado
+[Sound] open -> False guardado
+[Sound] close -> False guardado
+[Sound] listen -> False guardado
+[Sound] respond -> False guardado
+[Sound] notification -> False guardado
+[Sound] error -> False guardado
+[PATCH] Avengers: Age of Ultron golden aesthetics & Insert global hotkey loaded successfully!
+[Spotify] Posición cargada: X=416, Y=538
+[NEXUS] Modelo Vosk + Speaker ID biométrico cargados.
+[GLASS] MessageBox patch skipped: module 'ui' has no attribute 'IlumMessageBox'
+[GLASS] ColorPicker patch skipped: module 'ui' has no attribute 'IlumColorPicker'
+[GLASS] Activation error: 'MainWindow' object has no attribute 'head_buttons'
+[NEXUS] 🔌 Conectando...
+[TZ] Timezone loaded: America/Bogota
+[NEXUS] VAD config aplicado (typed)
+[ORB] loadFinished: True
+[NEXUS] ✅ Conectado.
+SYS: NEXUS en línea.
+[Guardian] Thread loop started successfully.[Guardian] Vision Guardian subsystem initialized.
+
+[NEXUS] 🎤 Mic iniciado
+[NEXUS] 🎤 Mic stream open
+[NEXUS] 👂 Recv iniciado
+[NEXUS] 🔊 Play iniciado
+[TZ] Timezone loaded: America/Bogota
+[DRM Security] Firma criptográfica verificada con éxito.
+[Supabase Client] Validación online completada: Licencia validada y registrada correctamente.
+[NEXUS] 📞 morning_brief
+[NEXUS] 🔧 morning_brief  {'force': True}
+[NEXUS] Reproduciendo sonido: sound
+[NEXUS] 📤 morning_brief → Good morning, sir. Here is your clean briefing.
+[NEXUS] 📞 get_current_time
+[NEXUS] 🔧 get_current_time  {}
+[NEXUS] Reproduciendo sonido: sound
+[NEXUS] 📞 weather_report
+[NEXUS] 🔧 weather_report  {'city': 'Bogota'}
+[NEXUS] Reproduciendo sonido: sound
+🌤️ Current weather in Bogota: Partly cloudy +19°C 56% ↖7km/h
+[NEXUS] 📤 weather_report → Current weather in Bogota: Partly cloudy +19°C 56% ↖7km/h
+SYS: 💤 Entrando en suspensión local.

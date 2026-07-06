@@ -451,7 +451,7 @@ class LoginWindow(QDialog):
         frame_layout.addWidget(self.btn_recover, 0, Qt.AlignmentFlag.AlignCenter)
 
         # Footer version
-        version_label = QLabel("v1.0.5 · Sistema de Seguridad Avanzado")
+        version_label = QLabel("v2.0.4 · Sistema de Seguridad Avanzado")
         version_label.setStyleSheet("color: rgba(255,255,255,0.15); font-size: 9px; letter-spacing: 1px;")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         frame_layout.addWidget(version_label)
@@ -581,7 +581,7 @@ class LoginWindow(QDialog):
         def bg_update_worker():
             try:
                 import time
-                current_ver = "1.0.5"
+                current_ver = "2.0.4"
                 update_res = drm_manager.check_for_updates(current_ver)
                 
                 if update_res.get("update_available"):
@@ -680,9 +680,3 @@ class LoginWindow(QDialog):
             print("[NEXUS Login] Login exitoso. Clave verificada:", verified_key)
             
         self.accept()
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    win = LoginWindow()
-    win.show()
-    sys.exit(app.exec())

@@ -806,7 +806,7 @@ class ShopWidget(QWidget):
             row.addWidget(icon_lbl)
             row.addSpacing(10)
 
-        title = QLabel("ILUM STORE")
+        title = QLabel("NEXUS STORE")
         title.setStyleSheet(
             "color: #fff; font-size: 28px; font-weight: 800;"
             " letter-spacing: 5px; background:transparent; border:none;"

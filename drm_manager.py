@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""drm_manager.py — Production strict 100% online DRM and update manager for ILUM AI."""
+"""drm_manager.py — Production strict 100% online DRM and update manager for NEXUS AI."""
 import os
 import json
 import hashlib
@@ -346,17 +346,17 @@ def recover_license(email: str) -> dict:
 ============================================================
 📧 SIMULACIÓN DE CORREO ENVIADO (VÍA SUPABASE ONLINE)
 Destinatario: {email}
-Asunto: 🔑 Recuperación de Licencia - ILUM
+Asunto: 🔑 Recuperación de Licencia - NEXUS
 Cuerpo:
 Hola,
-Has solicitado recuperar tus claves de licencia para ILUM.
+Has solicitado recuperar tus claves de licencia para NEXUS.
 Aquí tienes tus claves asociadas a este correo electrónico (obtenidas desde la nube):
 
 {keys_str}
 
 Guárdalas en un lugar seguro.
 Atentamente,
-El Equipo de ILUM
+El Equipo de NEXUS
 ============================================================
 \n"""
         with open(EMAIL_LOG_PATH, "a", encoding="utf-8") as f:
@@ -432,7 +432,7 @@ def check_for_updates(current_version: str) -> dict:
         
     return {"update_available": False}
 
-def download_and_apply_patch(download_url: str, target_filename: str = "ui.py", app_exe_name: str = "ILUM.exe") -> dict:
+def download_and_apply_patch(download_url: str, target_filename: str = "ui.py", app_exe_name: str = "NEXUS.exe") -> dict:
     """
     Descarga la actualización desde GitHub Releases y la aplica localmente.
 
@@ -484,7 +484,7 @@ def download_and_apply_patch(download_url: str, target_filename: str = "ui.py", 
             with ZipFile(update_zip, "r") as zipf:
                 zipf.extractall(extract_dir)
 
-            # Detectar la carpeta raíz dentro del zip (ej: ILUM/ILUM.exe, ILUM/_internal/, ...)
+            # Detectar la carpeta raíz dentro del zip (ej: NEXUS/NEXUS.exe, NEXUS/_internal/, ...)
             # Si el zip trae una única carpeta contenedora, usamos su contenido como origen.
             entries = [p for p in extract_dir.iterdir()]
             if len(entries) == 1 and entries[0].is_dir():
@@ -509,10 +509,23 @@ def download_and_apply_patch(download_url: str, target_filename: str = "ui.py", 
                     "message": f"El paquete ZIP no contiene '{app_exe_name}'. Actualización cancelada."
                 }
 
+            # Fix Auto-Updater Loop: Extraer versión de download_url e inyectarla
+            try:
+                import re
+                match = re.search(r'/releases/download/v?([\d\.]+)/', download_url)
+                if match:
+                    remote_ver = match.group(1)
+                    new_version_file = source_dir / "config" / "version.txt"
+                    new_version_file.parent.mkdir(parents=True, exist_ok=True)
+                    new_version_file.write_text(remote_ver, encoding="utf-8")
+                    print(f"[Supabase Client] Versión {remote_ver} inyectada en el parche.")
+            except Exception as e:
+                print(f"[Supabase Client] Error inyectando versión: {e}")
+
             # Generar el .bat que: espera, cierra la app, sincroniza TODA la carpeta,
             # limpia los temporales y vuelve a abrir la app.
             bat_content = f"""@echo off
-title Actualizando ILUM AI
+title Actualizando NEXUS AI
 timeout /t 2 /nobreak > nul
 
 taskkill /IM "{app_exe_name}" /F > nul 2>&1
@@ -540,7 +553,7 @@ del "%~f0"
 
             return {
                 "success": True,
-                "message": "Paquete completo preparado. Reiniciando ILUM para aplicar la actualización...",
+                "message": "Paquete completo preparado. Reiniciando NEXUS para aplicar la actualización...",
                 "requires_exit": True
             }
 
@@ -549,7 +562,7 @@ del "%~f0"
             print("[Supabase Client] Detectada actualización del ejecutable principal. Generando script de reemplazo...")
 
             bat_content = f"""@echo off
-title Actualizando ILUM AI
+title Actualizando NEXUS AI
 timeout /t 2 /nobreak > nul
 :retry
 del "{target_filename}" > nul 2>&1

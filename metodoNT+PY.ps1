@@ -161,6 +161,23 @@ Step "Copiando proyecto a staging sin secretos personales"
 if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
 Copy-TreeClean -Source $ProjectPath -Destination $stageRoot
 
+# ─────────────────────────────────────────────────────────────────────────
+# ✅ NUEVO: Verificacion del modelo de voz Vosk en el staging
+# ─────────────────────────────────────────────────────────────────────────
+Step "Verificando modelo de voz Vosk"
+$voskPath = Join-Path $stageRoot "config\vosk_model"
+if (-not (Test-Path -LiteralPath $voskPath) -or (Get-ChildItem -LiteralPath $voskPath -ErrorAction SilentlyContinue).Count -eq 0) {
+    Warn "config\vosk_model no existe o esta vacio. El .exe compilado NO tendra reconocimiento de voz local"
+    Warn "(afecta 'responder solo por nombre', deteccion de interrupciones y modo offline)."
+    Warn "Descarga un modelo desde https://alphacephei.com/vosk/models y colocalo en:"
+    Warn "  $ProjectPath\config\vosk_model"
+    $continue = Read-Host "Continuar compilando de todos modos? (s/n)"
+    if ($continue -ne "s") { Fail "Compilacion cancelada por falta de modelo Vosk." }
+} else {
+    Ok "Modelo Vosk encontrado: $voskPath"
+}
+# ─────────────────────────────────────────────────────────────────────────
+
 Push-Location $stageRoot
 
 Step "Creando configuracion publica minima"
@@ -260,8 +277,10 @@ $pyiArgs = @(
     "--add-data", "actions;actions",
     "--add-data", "NexusInicioRAV.wav;.",  # ✅ CAMBIADO
     "--add-data", "SuspenderNexus.wav;.",
+    "--add-data", "assets\sounds;assets\sounds",
     "--add-data", "ffmpeg.exe;.",
     "--add-data", "ffprobe.exe;.",
+    "--add-data", "yolov8n.pt;.",
     "--hidden-import", "PyQt6",
     "--hidden-import", "PyQt6.QtCore",
     "--hidden-import", "PyQt6.QtGui",
@@ -312,9 +331,15 @@ $pyiArgs = @(
     "--hidden-import", "tkinter",
     "--hidden-import", "playwright",
     "--hidden-import", "pptx",
+    "--hidden-import", "ultralytics",
+    "--hidden-import", "torch",
     "--collect-all", "vosk",
     "--collect-all", "playwright",
-    "--collect-all", "pptx"
+    "--collect-all", "pptx",
+    "--collect-all", "ultralytics",
+    "--collect-all", "torch",
+    "--copy-metadata", "ultralytics",
+    "--copy-metadata", "torch"
 )
 
 if (-not [string]::IsNullOrWhiteSpace($Icon)) {
@@ -365,6 +390,17 @@ Step "Copiando salida final al dist real"
 if (Test-Path -LiteralPath $distApp) { Remove-Item -LiteralPath $distApp -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 Copy-Item -LiteralPath $built -Destination $distRoot -Recurse -Force
+
+# ─────────────────────────────────────────────────────────────────────────
+# ✅ NUEVO: Confirmacion de que Vosk quedo incluido en el build final
+# ─────────────────────────────────────────────────────────────────────────
+$finalVoskPath = Join-Path $distApp "_internal\config\vosk_model"
+if (Test-Path -LiteralPath $finalVoskPath) {
+    Ok "Vosk incluido correctamente en el build final."
+} else {
+    Warn "ATENCION: Vosk NO quedo incluido en el build final."
+}
+# ─────────────────────────────────────────────────────────────────────────
 
 Ok "NEXUS compilado:"  # ✅ CAMBIADO
 Write-Host $distApp -ForegroundColor Green

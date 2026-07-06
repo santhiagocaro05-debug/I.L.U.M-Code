@@ -11,6 +11,48 @@ from datetime import datetime
 from pathlib import Path
 import warnings
 import gc
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ui import NexusUI
+
+# ────────────────────────────────────────────────────────────────────────────
+#  VERSIÓN DEL SISTEMA - AUTO-CREACIÓN DE version.txt
+# ────────────────────────────────────────────────────────────────────────────
+
+def get_app_version():
+    """
+    Lee la versión actual desde config/version.txt.
+    Si no existe, lo crea automáticamente con la versión por defecto.
+    """
+    version_file = Path(__file__).resolve().parent / "config" / "version.txt"
+    default_version = "2.0.4"
+    
+    # Crear carpeta config si no existe
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Si el archivo no existe, crearlo
+    if not version_file.exists():
+        try:
+            version_file.write_text(default_version, encoding="utf-8")
+            print(f"[NEXUS] ✅ Archivo version.txt creado con versión: {default_version}")
+            return default_version
+        except Exception as e:
+            print(f"[NEXUS] ⚠️ No se pudo crear version.txt: {e}")
+            return default_version
+    
+    # Si existe, leer la versión actual
+    try:
+        current_version = version_file.read_text(encoding="utf-8").strip()
+        if not current_version:
+            version_file.write_text(default_version, encoding="utf-8")
+            return default_version
+        return current_version
+    except Exception as e:
+        print(f"[NEXUS] ⚠️ Error leyendo version.txt: {e}")
+        return default_version
+
+NEXUS_VERSION = get_app_version()
 
 # --- Optimizaciones de RAM y Procesos de Chromium ---
 # Limita QWebEngine para usar menos RAM y procesos (ahorra ~150-300MB)
@@ -94,6 +136,44 @@ except Exception:
     pass
 
 _playing_sounds = []
+
+def _resolve_app_file_path(filename: str) -> str | None:
+    """Resolve a bundled asset path from the source tree or PyInstaller temp dir."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / filename)
+        candidates.append(Path(sys.executable).resolve().parent / filename)
+    candidates.append(Path(__file__).resolve().parent / filename)
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _play_wav_sound(sound_name: str) -> bool:
+    """Play a WAV sound from the app bundle or project folder."""
+    try:
+        import winsound
+    except Exception:
+        print("[NEXUS] ⚠️ winsound no disponible; no se pudo reproducir el audio.")
+        return False
+
+    basename = sound_name if sound_name.lower().endswith(".wav") else f"{sound_name}.wav"
+    sound_path = _resolve_app_file_path(basename)
+    if not sound_path:
+        print(f"[NEXUS] ⚠️ No se encontró el audio: {basename}")
+        return False
+
+    flags = winsound.SND_FILENAME | winsound.SND_ASYNC | getattr(winsound, "SND_NODEFAULT", 0)
+    try:
+        winsound.PlaySound(sound_path, flags)
+        return True
+    except Exception as e:
+        print(f"[NEXUS] ⚠️ Error al reproducir {basename}: {e}")
+        return False
+
 
 def play_mp3_sound(sound_name: str):
     """Play an mp3 sound from the assets folder asynchronously."""
@@ -192,6 +272,7 @@ _patch_settings_ui()
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
 )
+from core.time_utils import get_greeting, get_time_period
 
 try:
     from actions.file_processor import file_processor
@@ -209,6 +290,10 @@ try:
     from actions.macros            import macros
 except ImportError:
     macros = None
+try:
+    from actions.vscode_control import vscode_control
+except ImportError:
+    vscode_control = None
 try:
     from actions.close_app         import close_app
 except ImportError:
@@ -235,6 +320,51 @@ except ImportError:
     screen_vision = None
 
 try:
+    from actions.ar_vision import ar_vision
+except ImportError:
+    ar_vision = None
+
+try:
+    from actions.daily_report import daily_report
+except ImportError:
+    daily_report = None
+
+try:
+    from actions.file_server import file_server
+except ImportError:
+    file_server = None
+
+try:
+    from actions.log_analyzer import log_analyzer
+except ImportError:
+    log_analyzer = None
+
+try:
+    from actions.robot_control import robot_control
+except ImportError:
+    robot_control = None
+
+try:
+    from actions.stream_control import stream_control
+except ImportError:
+    stream_control = None
+
+try:
+    from actions.tiktok_live import tiktok_live
+except ImportError:
+    tiktok_live = None
+
+try:
+    from actions.workout_assistant import workout_assistant
+except ImportError:
+    workout_assistant = None
+
+try:
+    from actions.cleanup_system import cleanup_system
+except ImportError:
+    cleanup_system = None
+
+try:
     from actions.youtube_downloader import download_youtube
 except ImportError:
     download_youtube = None
@@ -248,6 +378,81 @@ try:
     from actions.file_converter import convert_file
 except ImportError:
     convert_file = None
+
+try:
+    from actions.youtube_control import youtube_control
+except ImportError:
+    youtube_control = None
+
+try:
+    from actions.work_mode import work_mode
+except ImportError:
+    work_mode = None
+
+try:
+    from actions.contextual_control import contextual_control
+except ImportError:
+    contextual_control = None
+
+try:
+    from actions.unified_communications import unified_communications
+except ImportError:
+    unified_communications = None
+
+try:
+    from actions.sleep_mode_timer import sleep_mode_timer
+except ImportError:
+    sleep_mode_timer = None
+
+try:
+    from actions.office_manager import office_manager
+except ImportError:
+    office_manager = None
+
+try:
+    from actions.auto_programmer import auto_programmer
+except ImportError:
+    auto_programmer = None
+
+try:
+    from actions._chrome_launch import _chrome_launch
+except ImportError:
+    _chrome_launch = None
+
+try:
+    from actions.social_manager import social_manager
+except ImportError:
+    social_manager = None
+
+try:
+    from actions.direct_input import direct_input
+except ImportError:
+    direct_input = None
+
+try:
+    from actions.improve_local_ai_integration import improve_local_ai_integration
+except ImportError:
+    improve_local_ai_integration = None
+
+try:
+    from actions.smart_file_organizer import smart_file_organizer
+except ImportError:
+    smart_file_organizer = None
+
+try:
+    from actions.proactive_automation import proactive_automation
+except ImportError:
+    proactive_automation = None
+
+try:
+    from actions.camera_bus import camera_bus
+except ImportError:
+    camera_bus = None
+
+try:
+    from actions.tool_creator import tool_creator
+except ImportError:
+    tool_creator = None
 
 try:
     from actions.student_mode import (
@@ -491,7 +696,10 @@ try:
     from actions.openrouter_agent  import openrouter_agent
 except ImportError:
     openrouter_agent = None
-
+try:
+    from actions.network_manager import network_manager
+except ImportError:
+    network_manager = None
 
 
 def get_base_dir():
@@ -670,6 +878,498 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+    "name": "network_manager",
+    "description": (
+        "Gestiona redes WiFi y dispositivos de red. "
+        "Permite listar redes WiFi, conectar/desconectar, escanear dispositivos, "
+        "hacer speed test, obtener IP y cambiar DNS."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": (
+                    "list_wifi — lista redes disponibles | "
+                    "connect — conecta a una red WiFi | "
+                    "disconnect — desconecta de WiFi | "
+                    "scan_devices — escanea dispositivos en la red | "
+                    "speed_test — prueba velocidad de internet | "
+                    "get_ip — obtiene IP local y pública | "
+                    "set_dns — cambia servidores DNS | "
+                    "flush_dns — limpia caché DNS"
+                )
+            },
+            "ssid": {"type": "STRING", "description": "Nombre de la red WiFi (para connect)"},
+            "password": {"type": "STRING", "description": "Contraseña de la red WiFi (para connect)"},
+            "dns1": {"type": "STRING", "description": "Primer servidor DNS (default: 8.8.8.8)"},
+            "dns2": {"type": "STRING", "description": "Segundo servidor DNS (default: 8.8.4.4)"}
+        },
+        "required": ["action"]
+    }
+},
+
+# ============================================================
+# NUEVAS HERRAMIENTAS AGREGADAS
+# ============================================================
+
+{
+    "name": "ar_vision",
+    "description": "Visión aumentada con reconocimiento de objetos, OCR y AR overlay en tiempo real.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "identify | read_text | scan_qr | ar_overlay"},
+            "region": {"type": "STRING", "description": "x,y,width,height (ej: '10,20,300,400')"},   # ✅ CORREGIDO
+            "overlay_type": {"type": "STRING", "description": "labels | translation | notes"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "daily_report",
+    "description": "Genera reportes diarios de actividad, estadísticas del sistema y recomendaciones.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "generate | send_email | reset"},
+            "email": {"type": "STRING", "description": "Email para enviar el reporte"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "file_server",
+    "description": "Servidor NAS virtual para compartir archivos en la red local.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "start | stop | share_folder"},
+            "port": {"type": "INTEGER", "description": "Puerto del servidor (default: 8000)"},
+            "directory": {"type": "STRING", "description": "Directorio a compartir"},
+            "folder_path": {"type": "STRING", "description": "Carpeta específica para compartir"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "log_analyzer",
+    "description": "Analiza logs de NEXUS y sistema para diagnosticar errores y sugerir soluciones.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "scan | diagnose | fix_suggestion"},
+            "lines": {"type": "INTEGER", "description": "Número de líneas a escanear (default: 100)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "robot_control",
+    "description": "Controla robots físicos como Roomba, Xiaomi y otros dispositivos domésticos.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "start_cleaning | dock | schedule | add_robot | connect"},
+            "robot_name": {"type": "STRING", "description": "Nombre del robot"},
+            "robot_type": {"type": "STRING", "description": "roomba | xiaomi"},
+            "config": {"type": "OBJECT", "description": "Configuración: {ip, token, device_id}"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "stream_control",
+    "description": "Controla transmisiones en Twitch, lee chat y responde a espectadores.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "read_chat | respond | start_stream"},
+            "streamer_name": {"type": "STRING", "description": "Nombre del streamer en Twitch"},
+            "message": {"type": "STRING", "description": "Mensaje para responder"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "tiktok_live",
+    "description": "Controla TikTok Live Studio para iniciar transmisiones y aplicar efectos.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "start | stop | effect | comment"},
+            "title": {"type": "STRING", "description": "Título de la transmisión"},
+            "effect_type": {"type": "STRING", "description": "glitch | blur | sparkle | transition"},
+            "message": {"type": "STRING", "description": "Comentario para overlay"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "workout_assistant",
+    "description": "Asistente de ejercicios con detección de repeticiones y feedback por cámara.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "start_workout | count_reps | form_feedback | summary"},
+            "exercise_type": {"type": "STRING", "description": "Tipo de ejercicio (default: general)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "cleanup_system",
+    "description": "Limpia archivos temporales, caché del navegador y papelera de reciclaje.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "temp_files | recycle_bin | browser_cache | all"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "network_manager",
+    "description": (
+        "Gestión completa de redes WiFi y dispositivos de red. "
+        "Permite listar redes WiFi, conectar/desconectar, escanear dispositivos "
+        "en la red local, hacer speed test, obtener IP local y pública, "
+        "cambiar servidores DNS, limpiar caché DNS, y abrir un panel "
+        "visual 'liquid glass' con todas las redes y dispositivos. "
+        "USAR cuando el usuario pida: 'conéctame a WiFi', 'lista redes WiFi', "
+        "'qué dispositivos hay en mi red', 'prueba velocidad de internet', "
+        "'cuál es mi IP', 'cambia el DNS', 'limpia la caché DNS', "
+        "'abre el panel de redes', 'configuración de WiFi'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": (
+                    "list_wifi — lista redes WiFi disponibles | "
+                    "connect — conecta a una red WiFi (requiere ssid y opcional password) | "
+                    "disconnect — desconecta de la red WiFi actual | "
+                    "scan_devices — escanea dispositivos en la red local | "
+                    "speed_test — prueba velocidad de internet (requiere speedtest-cli) | "
+                    "get_ip — obtiene IP local y pública | "
+                    "set_dns — cambia servidores DNS (default: 8.8.8.8, 8.8.4.4) | "
+                    "flush_dns — limpia caché DNS | "
+                    "open_panel — abre el panel visual liquid glass de redes | "
+                    "open_wifi_settings — abre configuración de WiFi de Windows"
+                )
+            },
+            "ssid": {
+                "type": "STRING",
+                "description": "Nombre de la red WiFi (requerido para connect)"
+            },
+            "password": {
+                "type": "STRING",
+                "description": "Contraseña de la red WiFi (opcional para connect, si la red es abierta no hace falta)"
+            },
+            "dns1": {
+                "type": "STRING",
+                "description": "Primer servidor DNS (default: 8.8.8.8)"
+            },
+            "dns2": {
+                "type": "STRING",
+                "description": "Segundo servidor DNS (default: 8.8.4.4)"
+            }
+        },
+        "required": ["action"]
+    }
+},
+    {
+    "name": "vscode_control",
+    "description": (
+        "Control avanzado de Visual Studio Code. Permite abrir proyectos, "
+        "instalar/desinstalar extensiones, gestionar archivos, ejecutar "
+        "build/run, y controlar la terminal integrada. "
+        "USAR cuando el usuario pida: 'abre VS Code', 'instala la extensión Python', "
+        "'abre mi proyecto', 'crea un archivo en VS Code', 'ejecuta el build', etc."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": (
+                    "open: Abre VS Code | open_project: Abre proyecto | "
+                    "install_extension: Instala extensión | uninstall_extension: Desinstala | "
+                    "list_extensions: Lista instaladas | search_extensions: Busca | "
+                    "open_file: Abre archivo | create_file: Crea archivo | "
+                    "run_command: Ejecuta comando interno | toggle_terminal: Terminal | "
+                    "build: Ejecuta build | run: Ejecuta proyecto | close: Cierra | "
+                    "status: Estado de VS Code"
+                )
+            },
+            "project_path": {"type": "STRING", "description": "Ruta del proyecto/carpeta"},
+            "file_path": {"type": "STRING", "description": "Ruta del archivo"},
+            "extension": {"type": "STRING", "description": "ID de la extensión (ej: ms-python.python)"},
+            "query": {"type": "STRING", "description": "Búsqueda de extensiones"},
+            "command": {"type": "STRING", "description": "Comando interno de VS Code"},
+            "content": {"type": "STRING", "description": "Contenido para create_file"}
+        },
+        "required": ["action"]
+    }
+},
+    {
+    "name": "contextual_control",
+    "description": (
+        "Control contextual de entorno. Ajusta dinámicamente volumen, brillo, plan de energía "
+        "y estado de Focus Assist (No Molestar) basándose en la ventana activa o comandos manuales."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": "adjust_context (auto-ajustar por ventana activa) | set_volume (fijar volumen) | set_brightness (fijar brillo) | set_power_plan (energía) | set_dnd (no molestar)"
+            },
+            "volume": {"type": "INTEGER", "description": "Nivel de volumen maestro (0-100)"},
+            "brightness": {"type": "INTEGER", "description": "Nivel de brillo de la pantalla (0-100)"},
+            "power_plan": {"type": "STRING", "description": "Plan de energía de Windows: balanced | high_performance | power_saver"},
+            "state": {"type": "STRING", "description": "Estado de No Molestar (Focus Assist): on | off | alarms"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "youtube_control",
+    "description": (
+        "Control COMPLETO de YouTube. Permite navegar, buscar, reproducir videos, "
+        "interactuar con la interfaz (like, subscribe, share), y controlar la reproducción "
+        "(play/pause, next, volume, fullscreen, speed, captions). "
+        "USAR cuando el usuario pida: 'abre YouTube', 'busca X en YouTube', "
+        "'reproduce X en YouTube', 've a mis suscripciones', 'dale like a este video', "
+        "'suscríbete a este canal', 'sube el volumen de YouTube', 'pantalla completa', etc."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": (
+                    "open: Abre YouTube | search: Busca videos | play_video: Reproduce | "
+                    "go_to: Navega (home/subscriptions/library/history/trending/shorts) | "
+                    "click_video: Click en video (por índice) | click_button: Click en botón | "
+                    "play_pause: Play/Pausa | next: Siguiente | previous: Anterior | "
+                    "mute: Silenciar | volume_up: Subir volumen | volume_down: Bajar | "
+                    "fullscreen: Pantalla completa | mini_player: Mini reproductor | "
+                    "captions: Subtítulos | speed: Velocidad | loop: Repetición | "
+                    "scroll: Desplazar | status: Estado"
+                )
+            },
+            "query": {"type": "STRING", "description": "Para search/play_video: lo que se busca"},
+            "section": {"type": "STRING", "description": "Para go_to: home, subscriptions, library, history, trending, shorts"},
+            "video_index": {"type": "INTEGER", "description": "Índice del video (1, 2, 3...) para click_video"},
+            "button": {"type": "STRING", "description": "Botón a clickear: like, dislike, subscribe, share, save"},
+            "speed": {"type": "NUMBER", "description": "Velocidad: 1.0, 1.25, 1.5, 2.0"},
+            "direction": {"type": "STRING", "description": "up | down (para scroll)"},
+            "scroll_amount": {"type": "INTEGER", "description": "Veces a desplazar (default: 3)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "unified_communications",
+    "description": (
+        "Gestión unificada de comunicaciones. Permite leer, enviar y organizar mensajes "
+        "y notificaciones en WhatsApp, Telegram, Discord y Gmail desde esta única interfaz."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "platform": {"type": "STRING", "description": "whatsapp | telegram | discord | gmail"},
+            "action": {"type": "STRING", "description": "send_message"},
+            "recipient": {"type": "STRING", "description": "Destinatario del mensaje"},
+            "message": {"type": "STRING", "description": "Contenido del mensaje"},
+            "subject": {"type": "STRING", "description": "Asunto (solo Gmail)"},
+            "token": {"type": "STRING", "description": "Token de Bot (opcional para Telegram)"}
+        },
+        "required": ["platform", "action", "recipient", "message"]
+    }
+},
+{
+    "name": "sleep_mode_timer",
+    "description": (
+        "Programa la entrada en modo suspensión después de un tiempo de inactividad. "
+        "Permite configurar el temporizador de suspensión automática."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "start | stop | status | set_timeout"},
+            "minutes": {"type": "INTEGER", "description": "Minutos de inactividad antes de suspender (default: 5)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "office_manager",
+    "description": (
+        "Gestión de herramientas de oficina. Permite gestionar documentos, correos, "
+        "calendario y tareas administrativas de forma centralizada."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "documents | email | calendar | tasks | reports"},
+            "query": {"type": "STRING", "description": "Consulta o comando específico"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "auto_programmer",
+    "description": (
+        "Suite de desarrollo y auto-programación autónoma avanzada. Permite a NEXUS escribir "
+        "código Python para nuevas herramientas, validar sintaxis, corregir errores e inyectar plugins."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "create_tool | fix_tool | test_tool | list_tools"},
+            "tool_name": {"type": "STRING", "description": "Nombre de la herramienta en snake_case"},
+            "description": {"type": "STRING", "description": "Descripción de la herramienta"},
+            "parameters_schema": {"type": "STRING", "description": "JSON de parámetros"},
+            "python_code": {"type": "STRING", "description": "Código Python de la herramienta"}
+        },
+        "required": ["action", "tool_name"]
+    }
+},
+{
+    "name": "social_manager",
+    "description": (
+        "Gestión unificada de redes sociales. Permite publicar, monitorear y analizar "
+        "contenido en múltiples plataformas sociales."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "post | schedule | analytics | monitor | engage"},
+            "platform": {"type": "STRING", "description": "twitter | instagram | linkedin | facebook | tiktok"},
+            "content": {"type": "STRING", "description": "Contenido a publicar"},
+            "media_path": {"type": "STRING", "description": "Ruta de imagen/video (opcional)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "direct_input",
+    "description": (
+        "Simula pulsaciones de teclas y clics de mouse de forma directa y precisa. "
+        "Útil para automatización avanzada y control de aplicaciones."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "press_key | release_key | click | move_mouse | type_text"},
+            "key": {"type": "STRING", "description": "Tecla a presionar"},
+            "x": {"type": "INTEGER", "description": "Coordenada X"},
+            "y": {"type": "INTEGER", "description": "Coordenada Y"},
+            "text": {"type": "STRING", "description": "Texto a escribir"},
+            "button": {"type": "STRING", "description": "left | right | middle"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "improve_local_ai_integration",
+    "description": (
+        "Optimiza el rendimiento de la IA local (Ollama, etc.) para respuestas más rápidas "
+        "y uso eficiente de recursos."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "optimize | status | reset | configure"},
+            "memory_limit": {"type": "INTEGER", "description": "Límite de memoria en MB"},
+            "gpu_layers": {"type": "INTEGER", "description": "Capas de GPU a usar"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "smart_file_organizer",
+    "description": (
+        "Análisis y organización inteligente de archivos. Clasifica por categorías, "
+        "detecta duplicados y analiza espacio en disco."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "organize | find_duplicates | disk_space"},
+            "directory": {"type": "STRING", "description": "Directorio a analizar"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "proactive_automation",
+    "description": (
+        "Gestiona reglas complejas basadas en el uso del sistema para optimizar el rendimiento "
+        "y automatizar recordatorios proactivos."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "add_rule | list_rules | delete_rule | trigger_check"},
+            "rule_name": {"type": "STRING", "description": "Nombre de la regla"},
+            "trigger": {"type": "STRING", "description": "cpu_high | ram_high | time_of_day | app_open"},
+            "trigger_value": {"type": "STRING", "description": "Valor del disparador"},
+            "action_to_take": {"type": "STRING", "description": "Acción a ejecutar"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "camera_bus",
+    "description": (
+        "Controla el subsistema de pilotaje y navegación gestual por cámara. "
+        "Permite activar, desactivar o alternar el control gestual del mouse usando la webcam."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "enable | disable | toggle"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "tool_creator",
+    "description": (
+        "Permite a NEXUS programar e instalar sus propias herramientas. "
+        "Escribe código Python y se instalará automáticamente."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "tool_name": {"type": "STRING", "description": "Nombre de la herramienta en snake_case"},
+            "description": {"type": "STRING", "description": "Descripción de la herramienta"},
+            "parameters_schema": {"type": "STRING", "description": "JSON schema de parámetros"},
+            "python_code": {"type": "STRING", "description": "Código Python de la herramienta"}
+        },
+        "required": ["tool_name", "description", "parameters_schema", "python_code"]
+    }
+},
+{
+    "name": "_chrome_launch",
+    "description": (
+        "Función interna para lanzar Chrome con perfiles y configuraciones específicas. "
+        "Permite abrir Chrome con diferentes perfiles de usuario."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "profile": {"type": "STRING", "description": "Nombre del perfil de Chrome"},
+            "url": {"type": "STRING", "description": "URL a abrir (opcional)"}
+        },
+        "required": ["profile"]
+    }
+},
+    {
         "name": "proactive_routine",
         "description": "Inicia rutinas matutinas o diarias. Úsalo cuando el usuario te pida que revises sus tareas matutinas, agenda, etc.",
         "parameters": {
@@ -683,6 +1383,46 @@ TOOL_DECLARATIONS = [
             "required": ["action"]
         }
     },
+    {
+    "name": "work_mode",
+    "description": (
+        "Gestiona perfiles profesionales de trabajo para programadores, diseñadores, "
+        "editores de video, streamers, oficina, soporte técnico, marketing, músicos, etc. "
+        "Permite iniciar/detener perfiles con múltiples aplicaciones, crear perfiles "
+        "desde snapshots de apps abiertas, usar plantillas por profesión, y gestionar "
+        "el entorno de trabajo completo con un solo comando. "
+        "USAR SIEMPRE cuando el usuario pida: 'modo trabajo', 'perfil de trabajo', "
+        "'entorno de trabajo', 'abrir mis apps de trabajo', 'cerrar todo', "
+        "'guardar mi sesión de trabajo', 'perfil de programador', 'perfil de diseño', etc."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": (
+                    "start/activate: Inicia un perfil | stop: Detiene un perfil | "
+                    "list/profiles: Lista todos los perfiles | templates: Lista plantillas | "
+                    "create_from_template: Crea perfil desde plantilla | snapshot: Crea perfil desde apps abiertas | "
+                    "create: Crea perfil vacío | delete: Elimina perfil | "
+                    "rename: Renombra perfil | duplicate: Duplica perfil | "
+                    "add: Agrega app a perfil | remove: Elimina app de perfil | "
+                    "edit: Edita app existente | status: Estado actual"
+                )
+            },
+            "profile_name": {"type": "STRING", "description": "Nombre del perfil a gestionar"},
+            "new_name": {"type": "STRING", "description": "Nuevo nombre para rename/duplicate"},
+            "template": {"type": "STRING", "description": "Plantilla: programador, diseñador, editor_video, streamer, oficina, soporte_tecnico, marketing, musica_audio"},
+            "app_name": {"type": "STRING", "description": "Nombre de la app a eliminar/editar"},
+            "app_data": {
+                "type": "OBJECT",
+                "description": "Datos de la app: {name, type, path, args?, delay?, wait?, run_as_admin?}"
+            },
+            "description": {"type": "STRING", "description": "Descripción del perfil (opcional)"}
+        },
+        "required": ["action"]
+    }
+},
     {
         "name": "inventory_manager",
         "description": "Gestión de bases de datos de inventario para empresas. Permite añadir/quitar productos, consultar stock y calcular el valor total.",
@@ -2763,6 +3503,8 @@ class NexusLive:
                 pass
         self.noise_gate_threshold = float(cfg_keys.get("mic_sensitivity", 0.003))
         self.last_speech_time     = 0.0
+        self.ai_name = (cfg_keys.get("ai_name", "NEXUS") or "NEXUS").strip() or "NEXUS"
+        self.respond_only_by_name = bool(cfg_keys.get("respond_only_by_name", False))
         self.update_wake_words(cfg_keys)
 
         # ── Fish Audio (clonación de voz en la nube) — opcional ─────────────
@@ -2825,6 +3567,7 @@ class NexusLive:
         
         self.last_activity = time.time()
         self._meditation_playing = False
+        self._name_activation_deadline = 0.0
         threading.Thread(target=self._meditation_loop, daemon=True).start()
         threading.Thread(target=self._antivirus_watcher_loop, daemon=True).start()
         self._tts_speak_lock: asyncio.Lock | None = None
@@ -2859,6 +3602,8 @@ class NexusLive:
         
         # Actualizar dinámicamente la puerta de ruido sin reiniciar
         self.noise_gate_threshold = float(cfg.get("mic_sensitivity", 0.003))
+        self.ai_name = (cfg.get("ai_name", "NEXUS") or "NEXUS").strip() or "NEXUS"
+        self.respond_only_by_name = bool(cfg.get("respond_only_by_name", False))
         
         # ── Recargar configuración de Fish Audio ────────────────────────────
         self._fish_audio_enabled = cfg.get("fish_audio_enabled", False)
@@ -2994,6 +3739,51 @@ class NexusLive:
                         
         self.wake_words = list(set(words))
         
+    def _is_name_activation(self, text: str) -> bool:
+        if not text or not str(text).strip():
+            return False
+
+        text_lower = str(text).lower().strip()
+        if not text_lower:
+            return False
+
+        normalized_text = re.sub(r"[^a-z0-9\s]", " ", text_lower)
+        normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
+        if not normalized_text:
+            return False
+
+        if any(token.startswith("nex") for token in normalized_text.split()):
+            return True
+
+        candidate_names = []
+        ai_name = (getattr(self, "ai_name", "") or "").strip().lower()
+        if ai_name:
+            candidate_names.append(ai_name)
+        candidate_names.append("nexus")
+
+        for name in candidate_names:
+            name_clean = re.sub(r"[^a-z0-9]+", "", name.lower())
+            if not name_clean:
+                continue
+
+            variants = {name_clean}
+            if len(name_clean) >= 3:
+                variants.add(name_clean[:3])
+                variants.add(name_clean[:4])
+                variants.add(name_clean[:5])
+
+            for variant in variants:
+                if not variant:
+                    continue
+                if re.search(rf"(^|\s){re.escape(variant)}($|\s)", normalized_text):
+                    return True
+                if normalized_text.startswith(variant) or normalized_text.endswith(variant):
+                    return True
+                if any(token.startswith(variant) for token in normalized_text.split()):
+                    return True
+
+        return False
+
     def _load_speaker_profile(self):
         import json
         from pathlib import Path
@@ -3032,22 +3822,18 @@ class NexusLive:
                 self.ui.write_log("SYS: 🟢 ¡Despierto!")
                 self.ui.update_suspend_button(False)
                 try:
-                    import winsound
-                    import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
-                    winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                except: pass
+                    _play_wav_sound("SuspenderNexus")
+                except Exception:
+                    pass
             else:
                 self.is_sleeping = True
                 self.ui.write_log("SYS: 💤 Entrando en suspensión local.")
                 self.ui.set_state("MUTED")
                 self.ui.update_suspend_button(True)
                 try:
-                    import winsound
-                    import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
-                    winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                except: pass
+                    _play_wav_sound("SuspenderNexus")
+                except Exception:
+                    pass
                 if getattr(self, "audio_in_queue", None):
                     while not self.audio_in_queue.empty():
                         try: self.audio_in_queue.get_nowait()
@@ -3060,11 +3846,14 @@ class NexusLive:
             self.ui.write_log("SYS: 🎤 Hable ahora para registrar su voz (unos 3-5 segundos).")
             return
 
-        if not self._loop or not self.session:
-            return
-
         if text == "SYS_UNAUTHORIZED_SPEAKER":
             text = "[SYS: El hablante actual es DESCONOCIDO. Rechaza la orden educadamente indicando que solo sirves a tu señor.]"
+
+        if getattr(self, "respond_only_by_name", False) and not self._is_name_activation(text):
+            return
+
+        if not self._loop or not self.session:
+            return
 
         if getattr(self, "is_sleeping", False):
             # Check if text contains wake word or despierta
@@ -3074,13 +3863,10 @@ class NexusLive:
                 self.is_sleeping = False
                 self.ui.set_state("LISTENING")
                 self.ui.write_log("SYS: 🟢 ¡Despierto por comando de texto!")
-                # Play sound
                 try:
-                    import winsound
-                    import os
-                    audio_path = os.path.join(os.path.dirname(__file__), "SuspenderNexus.wav")
-                    winsound.PlaySound(audio_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                except: pass
+                    _play_wav_sound("SuspenderNexus")
+                except Exception:
+                    pass
             else:
                 assigned_name = "NEXUS"
                 try:
@@ -3554,7 +4340,111 @@ class NexusLive:
                 elif name == "close_app":
                     r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: close_app(parameters=args, response=None, player=self.ui))
                     result = r or f"Closed {args.get('app_name')}."
-    
+                
+                elif name == "ar_vision":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: ar_vision(parameters=args, player=self.ui))
+                    result = r or "Visión aumentada ejecutada."
+
+                elif name == "daily_report":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: daily_report(parameters=args, player=self.ui))
+                    result = r or "Reporte diario generado."
+
+                elif name == "file_server":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: file_server(parameters=args, player=self.ui))
+                    result = r or "Servidor NAS gestionado."
+
+                elif name == "log_analyzer":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: log_analyzer(parameters=args, player=self.ui))
+                    result = r or "Análisis de logs completado."
+                
+                elif name == "robot_control":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: robot_control(parameters=args, player=self.ui))
+                    result = r or "Control de robot ejecutado."
+
+                elif name == "stream_control":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: stream_control(parameters=args, player=self.ui))
+                    result = r or "Control de stream ejecutado."
+
+                elif name == "tiktok_live":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: tiktok_live(parameters=args, player=self.ui))
+                    result = r or "Control de TikTok Live ejecutado."
+
+                elif name == "workout_assistant":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: workout_assistant(parameters=args, player=self.ui))
+                    result = r or "Asistente de ejercicios ejecutado."
+
+                elif name == "cleanup_system":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: cleanup_system(parameters=args, player=self.ui))
+                    result = r or "Limpieza de sistema ejecutada."
+
+                elif name == "network_manager":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: network_manager(parameters=args, player=self.ui))
+                    result = r or "Gestión de red ejecutada."
+
+                elif name == "youtube_control":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: youtube_control(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "vscode_control":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: vscode_control(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "contextual_control":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: contextual_control(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "unified_communications":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: unified_communications(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "sleep_mode_timer":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: sleep_mode_timer(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "office_manager":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: office_manager(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "auto_programmer":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: auto_programmer(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "social_manager":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: social_manager(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "direct_input":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: direct_input(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "improve_local_ai_integration":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: improve_local_ai_integration(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "smart_file_organizer":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: smart_file_organizer(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "proactive_automation":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: proactive_automation(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "camera_bus":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: camera_bus(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "tool_creator":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: tool_creator(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "_chrome_launch":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: _chrome_launch(parameters=args, player=self.ui))
+                    result = r or "Done."
+
+                elif name == "work_mode":
+                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: work_mode(parameters=args, player=self.ui))
+                    result = r or "Done."
+
                 elif name == "game_control":
                     from actions.game_control import game_control
                     r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: game_control(parameters=args, player=self.ui))
@@ -4156,6 +5046,7 @@ class NexusLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            import time
             # Si el usuario hace clic en el botón de la interfaz para desmutear, salir de suspensión
             if getattr(self, "is_sleeping", False) and not self.ui.muted:
                 self.is_sleeping = False
@@ -4201,6 +5092,38 @@ class NexusLive:
 
             with self._speaking_lock:
                 nexus_speaking = self._is_speaking
+
+            should_forward_audio = True
+            if getattr(self, "respond_only_by_name", False) and not getattr(self, "is_sleeping", False):
+                recognizer = getattr(self, "vosk_recognizer", None)
+                if recognizer:
+                    try:
+                        audio_data = indata.tobytes()
+                        is_final = recognizer.AcceptWaveform(audio_data)
+                        partial_res = json.loads(recognizer.PartialResult())
+                        partial_text = partial_res.get("partial", "").lower()
+                        if len(partial_text) > 150:
+                            recognizer.Reset()
+                            partial_text = ""
+
+                        text = ""
+                        if is_final:
+                            res = json.loads(recognizer.Result())
+                            text = res.get("text", "").lower()
+
+                        now = time.time()
+                        deadline = getattr(self, "_name_activation_deadline", 0.0)
+                        if self._is_name_activation(partial_text) or self._is_name_activation(text):
+                            self._name_activation_deadline = now + 6.0
+                            should_forward_audio = True
+                            recognizer.Reset()
+                        else:
+                            should_forward_audio = now < deadline
+                    except Exception:
+                        should_forward_audio = False
+                else:
+                    should_forward_audio = False
+
             if not nexus_speaking and not self.ui.muted:
                 # Calculate RMS audio level for sphere visualization
                 rms = 0.0
@@ -4246,6 +5169,7 @@ class NexusLive:
                 # Si estamos dentro del tiempo de resaca (hangover) de 0.8s, transmitir el paquete
                 if now - getattr(self, "last_speech_time", 0.0) < 0.8:
                     data = indata.tobytes()
+                    audio_payload = data if should_forward_audio else bytes(CHUNK_SIZE * 2)
                     if getattr(self, "vosk_interrupt_recognizer", None):
                         try:
                             if self.vosk_interrupt_recognizer.AcceptWaveform(data):
@@ -4259,10 +5183,10 @@ class NexusLive:
                                         self.master_speaker_vector = current_vec
                                         self.registering_voice = False
                                         self.ui.write_log("SYS: ✅ ¡Perfil de voz registrado exitosamente!")
-                                        import winsound
-                                        import os
-                                        try: winsound.PlaySound(os.path.join(os.path.dirname(__file__), "NexusInicioRAV.wav"), winsound.SND_FILENAME | winsound.SND_ASYNC)
-                                        except: pass
+                                        try:
+                                            _play_wav_sound("NexusInicioRAV")
+                                        except Exception:
+                                            pass
                                     elif self._is_unauthorized_speaker(current_vec):
                                         self.ui.write_log("SYS: 🛑 Intruso detectado. Bloqueando comando.")
                                         self._on_text_command("SYS_UNAUTHORIZED_SPEAKER")
@@ -4276,21 +5200,19 @@ class NexusLive:
                         except Exception:
                             pass
                     loop.call_soon_threadsafe(
-                        _safe_put, self.out_queue, {"data": data, "mime_type": "audio/pcm"}
+                        _safe_put, self.out_queue, {"data": audio_payload, "mime_type": "audio/pcm"}
                     )
                 else:
-                    # Enviar un paquete vacío de "keep-alive" cada 10 segundos de silencio para mantener el WebSocket vivo
-                    if now - getattr(self, "last_keepalive_time", 0.0) >= 10.0:
-                        self.last_keepalive_time = now
-                        data = bytes(CHUNK_SIZE * 2) # Datos en cero (silencio)
-                        def _safe_put(q, item):
-                            try:
-                                q.put_nowait(item)
-                            except Exception:
-                                pass
-                        loop.call_soon_threadsafe(
-                            _safe_put, self.out_queue, {"data": data, "mime_type": "audio/pcm"}
-                        )
+                    # Enviar silencio continuo para mantener sincronizado el WebSocket y evitar timeout
+                    data = bytes(CHUNK_SIZE * 2) # Datos en cero (silencio)
+                    def _safe_put(q, item):
+                        try:
+                            q.put_nowait(item)
+                        except Exception:
+                            pass
+                    loop.call_soon_threadsafe(
+                        _safe_put, self.out_queue, {"data": data, "mime_type": "audio/pcm"}
+                    )
             elif nexus_speaking:
                 try:
                     rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2))) / 32768.0
@@ -4674,6 +5596,131 @@ class NexusLive:
                 pass
             self._audio_out_stream = None
 
+    async def _offline_run(self, check_internet: bool = False):
+        """Bucle de supervivencia offline o proveedor alternativo (Ollama/OpenRouter)."""
+        print("[NEXUS] Entrando en Modo Supervivencia (Offline / Ollama).")
+        self.ui.set_state("LISTENING")
+        self.ui.write_log("SYS: NEXUS en línea (Modo Supervivencia Local / Ollama).")
+        
+        from actions.openrouter_agent import openrouter_agent
+        import sounddevice as sd
+        import asyncio
+        import json
+        import time
+        import numpy as np
+        
+        if not getattr(self, "vosk_recognizer", None):
+            self.ui.write_log("SYS: ❌ Error crítico: Modelo Vosk no encontrado para modo offline.")
+            return
+
+        self._stop_requested.clear()
+        
+        loop = asyncio.get_event_loop()
+        text_queue = asyncio.Queue()
+        
+        def mic_callback(indata, frames, time_info, status):
+            if self._stop_requested.is_set(): return
+            if getattr(self, "is_sleeping", False): return
+            if getattr(self, "_is_speaking", False) or getattr(self.ui, "muted", False): return
+
+            rms = 0.0
+            try:
+                rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2))) / 32768.0
+                self.ui.set_audio_level(min(1.0, rms * 18))
+            except Exception:
+                pass
+
+            if rms < 0.003: return
+
+            data = indata.tobytes()
+            try:
+                if self.vosk_recognizer.AcceptWaveform(data):
+                    res = json.loads(self.vosk_recognizer.Result())
+                    text = res.get("text", "").strip()
+                    if text:
+                        def _safe_put(q, item):
+                            try: q.put_nowait(item)
+                            except Exception: pass
+                        loop.call_soon_threadsafe(_safe_put, text_queue, text)
+            except Exception:
+                pass
+
+        mic_device_idx = None
+        try:
+            from pathlib import Path
+            api_cfg_path = Path(__file__).resolve().parent / "config" / "api_keys.json"
+            if api_cfg_path.exists():
+                c = json.loads(api_cfg_path.read_text(encoding="utf-8"))
+                d = c.get("mic_device", "")
+                if d != "":
+                    mic_device_idx = int(d)
+        except Exception:
+            pass
+
+        async def _process_text_loop():
+            while True:
+                text = await text_queue.get()
+                if not text or self._stop_requested.is_set():
+                    continue
+                
+                self.ui.write_log(f"Tú: {text}")
+                self.ui.set_state("THINKING")
+                
+                self._fire_phrase_triggers(text)
+                if self._stop_requested.is_set():
+                    continue
+
+                try:
+                    # En modo supervivencia forzamos Ollama.
+                    response_text = await loop.run_in_executor(None, lambda: openrouter_agent(text, force_provider="ollama"))
+                except Exception as e:
+                    response_text = f"Error al procesar la solicitud localmente: {e}"
+                
+                if not self._stop_requested.is_set() and response_text:
+                    self.ui.write_log(f"NEXUS: {response_text}")
+                    if self._local_tts_enabled:
+                        await self._speak_local_chunk_async(response_text)
+                    else:
+                        import threading
+                        threading.Thread(target=self.speak, args=(response_text,), daemon=True).start()
+                    
+                self.ui.set_state("LISTENING")
+
+        process_task = asyncio.create_task(_process_text_loop())
+        stream = None
+
+        try:
+            stream = sd.RawInputStream(
+                device=mic_device_idx,
+                samplerate=16000,
+                channels=1,
+                dtype="int16",
+                blocksize=8000, # 0.5s chunks
+                callback=mic_callback
+            )
+            stream.start()
+            while True:
+                await asyncio.sleep(10.0)
+                if check_internet:
+                    import urllib.request
+                    try:
+                        urllib.request.urlopen("https://8.8.8.8", timeout=3)
+                        self.ui.write_log("SYS: 🌐 Conexión restablecida. Retornando a la red principal.")
+                        try:
+                            import threading
+                            threading.Thread(target=self.speak, args=("Conexión restablecida. Retornando a la red principal.",), daemon=True).start()
+                        except: pass
+                        break
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[NEXUS] Error en micrófono offline: {e}")
+        finally:
+            if stream: stream.close()
+            process_task.cancel()
+
     async def run(self):
         # ── VERIFICACIÓN DE INTEGRIDAD EN CALIENTE (LOOP ASÍNCRONO) ────────
         from hashlib import sha256
@@ -4696,6 +5743,24 @@ class NexusLive:
             print("[DRM Security] Violación de integridad del loop de IA. Bloqueado.")
             os._exit(0)
         # ──────────────────────────────────────────────────────────────────
+
+        api_provider = "gemini"
+        try:
+            cfg_path = Path(__file__).resolve().parent / "config" / "api_keys.json"
+            if cfg_path.exists():
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                api_provider = cfg.get("ai_provider", "gemini").lower().strip()
+        except Exception:
+            pass
+
+        if api_provider in ["ollama", "openrouter"]:
+            while True:
+                try:
+                    await self._offline_run(check_internet=False)
+                except Exception as e:
+                    print(f"[NEXUS] Error en loop alternativo: {e}")
+                    await asyncio.sleep(2)
+            return
 
         client = genai.Client(
             api_key=_get_api_key(),
@@ -4737,7 +5802,11 @@ class NexusLive:
                     if self._first_connect:
                         self._first_connect = False
                         
-                        threading.Thread(target=lambda: self.speak("Sistemas en línea. A sus órdenes."), daemon=True).start()
+                        greeting = get_greeting()
+                        threading.Thread(
+                            target=lambda: self.speak(f"{greeting}. Sistemas en línea. A sus órdenes."),
+                            daemon=True,
+                        ).start()
                         
                         # Start Vision Guardian if enabled
                         try:
@@ -4747,17 +5816,24 @@ class NexusLive:
                             )
                         except Exception as _vge:
                             print(f"[NEXUS] VisionGuardian init error: {_vge}")
-                        # Auto morning brief (6am–12pm, once per day)
+                        # Auto daily brief (morning/afternoon/night), once per day
                         _hour = __import__("datetime").datetime.now().hour
-                        if 6 <= _hour < 12 and not already_briefed_today():
+                        period = get_time_period(_hour)
+                        if 6 <= _hour < 24 and not already_briefed_today():
                             async def _auto_brief():
                                 await asyncio.sleep(1)  # let session settle
                                 _load_tz()
                                 now_b = __import__("datetime").datetime.now(_BA_TZ)
                                 current_time = now_b.strftime("%I:%M %p")
                                 current_date = now_b.strftime("%A, %d de %B de %Y")
+                                if period == "mañana":
+                                    brief_text = "Dame el informe matutino del día."
+                                elif period == "tarde":
+                                    brief_text = "Dame el informe de la tarde."
+                                else:
+                                    brief_text = "Dame el informe nocturno."
                                 await self.session.send_client_content(
-                                    turns={"parts": [{"text": f"[AUTO] Son exactamente las {current_time} del {current_date}. Dame el informe matutino del día."}]},
+                                    turns={"parts": [{"text": f"[AUTO] Son exactamente las {current_time} del {current_date}. {brief_text}"}]},
                                     turn_complete=True
                                 )
                                 from actions.morning_brief import mark_briefed
@@ -4787,7 +5863,6 @@ class NexusLive:
                         # Timeout de WebSocket al conectar — error de red transitorio.
                         # NO incrementar consecutive_fails: sólo reintento rápido.
                         is_handshake_timeout = True
-                        print(f"[NEXUS] ⏱️ Timeout al conectar — reintentando en 1s...")
                     elif "1011" in msg or "Internal error" in msg:
                         tool_hint = self._api_1011_tool or ""
                         print(f"[NEXUS] ⚡ API 1011{tool_hint and ' durante '+tool_hint} — reconectando...")
@@ -4872,6 +5947,10 @@ def main():
         print("[NEXUS] ⚠️ ADVERTENCIA: No se está ejecutando con privilegios de Administrador.")
         print("[NEXUS] ⚠️ Algunas funciones de control del PC o de terminal podrían fallar.")
         print("[NEXUS] ⚠️ Se recomienda iniciar NEXUS mediante 'Iniciar NEXUS Beta.vbs'.")
+
+    # ── 🔥 NUEVO: ASEGURAR QUE EXISTE version.txt ───────────────────────────
+    get_app_version()
+
 
     # ── License check ─────────────────────────────────────────────────────────
     # ──────────────────────────────────────────────────────────────────────────
@@ -5039,19 +6118,42 @@ def main():
             _verified_license_key = _local_key
             _session_drm_token = sha256(f"{_local_key}:{drm_manager.get_hwid()}:NEXUS_AI_SECURE_SALT_2026".encode()).hexdigest()
             
-            # --- AUTO-UPDATE CHECK FOR SILENT STARTUP ---
+            # --- AUTO-UPDATE CHECK WITH UI ---
             try:
-                _update_check = drm_manager.check_for_updates("1.0.5")
+                current_version = "2.0.4"
+                version_file = Path(__file__).resolve().parent / "config" / "version.txt"
+                if version_file.exists():
+                    current_version = version_file.read_text(encoding="utf-8").strip()
+                
+                _update_check = drm_manager.check_for_updates(current_version)
                 if _update_check.get("update_available"):
+                    from PyQt6.QtWidgets import QApplication
+                    from PyQt6.QtCore import QEventLoop
+                    from updater_ui import UpdateWindow
+                    
+                    app = QApplication.instance() or QApplication(sys.argv)
+                    
                     _url = _update_check.get("url")
                     _target = "ui.py"
-                    if _url.endswith(".py"):
+                    if _url.endswith(".py") or _url.endswith(".exe"):
                         _target = _url.split("/")[-1]
-                    print(f"[DRM Update] Descargando actualización silenciosa de {_target}...")
-                    drm_manager.download_and_apply_patch(_url, _target)
-                    print("[DRM Update] Actualización silenciosa aplicada con éxito.")
+                        
+                    loop = QEventLoop()
+                    
+                    def on_download():
+                        print(f"[DRM Update] Descargando actualización de {_target}...")
+                        drm_manager.download_and_apply_patch(_url, _target)
+                        # We do NOT update version_file here anymore, it's done inside download_and_apply_patch
+                    
+                    update_win = UpdateWindow(_update_check, on_download, loop.quit)
+                    update_win.show()
+                    
+                    loop.exec()
+                    
+                    # If loop.exec() returns, user clicked 'Omitir por ahora' or update failed
+                    # Startup will continue
             except Exception as _ue:
-                print(f"[DRM Update] Error al comprobar actualización silenciosa: {_ue}")
+                print(f"[DRM Update] Error al comprobar actualización: {_ue}")
             
     if not _is_licensed:
         from login import LoginWindow
@@ -5093,6 +6195,11 @@ def main():
 
     ui = NexusUI("face.png")
     ui.loaded_custom_fonts = loaded_custom_fonts
+
+    try:
+        _play_wav_sound("NexusInicioRAV")
+    except Exception as _sound_err:
+        print(f"[NEXUS] ⚠️ No se pudo reproducir el audio de inicio: {_sound_err}")
 
     # --- START BACKGROUND LICENSE GUARDIAN ---
     try:
@@ -5263,4 +6370,6 @@ def main():
     os._exit(0)
 
 if __name__ == "__main__":
-    main()  
+    import multiprocessing
+    multiprocessing.freeze_support()
+    main()
