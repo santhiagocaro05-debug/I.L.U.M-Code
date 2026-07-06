@@ -8,9 +8,20 @@ Soporta:
 - Navegación, pestañas, scroll, zoom, historial
 - Búsqueda en múltiples motores de búsqueda
 - Control de YouTube, Spotify, Netflix
+
+CHANGELOG (mejoras 157 Team):
+- FIX: maximize/fullscreen ahora manejan correctamente el estado minimizado
+  y la transición ventana <-> pantalla completa.
+- NUEVO: acción 'clear_history' para borrar historial/datos de navegación.
+- NUEVO: 'close_tab' ahora acepta 'tab_name' para cerrar una pestaña
+  específica (por título) sin afectar la pestaña activa actual.
+- NUEVO: acción 'restore' y alias 'windowed'/'exit_fullscreen'.
+- FIX: bug real en youtube_next/youtube_prev, usaban pyautogui.press()
+  con múltiples argumentos (no funciona), ahora usan hotkey().
 """
 
 import time
+import ctypes
 import pyautogui
 import pygetwindow as gw
 import urllib.parse
@@ -25,7 +36,7 @@ import re
 
 # Palabras clave para detectar navegadores
 BROWSER_KEYWORDS = [
-    "Brave", "Chrome", "Edge", "Firefox", "Opera", 
+    "Brave", "Chrome", "Edge", "Firefox", "Opera",
     "Vivaldi", "Safari", "Internet Explorer", "Microsoft Edge",
     "Opera Mini", "comet", "Arc", "SigmaOS", "Orion"
 ]
@@ -67,7 +78,7 @@ APP_URLS = {
     "teams": "https://teams.microsoft.com/search?q={query}",
     "zoom": "https://zoom.us/search?q={query}",
     "meet": "https://meet.google.com/search?q={query}",
-    
+
     # ============================================================
     #  COMPRAS Y MARKETPLACES
     # ============================================================
@@ -93,7 +104,7 @@ APP_URLS = {
     "etsy": "https://www.etsy.com/search?q={query}",
     "olx": "https://www.olx.com.co/search?q={query}",
     "facebook_marketplace": "https://www.facebook.com/marketplace/search?q={query}",
-    
+
     # ============================================================
     #  MÚSICA Y ENTRETENIMIENTO
     # ============================================================
@@ -114,7 +125,7 @@ APP_URLS = {
     "crunchyroll": "https://www.crunchyroll.com/search?q={query}",
     "pluto_tv": "https://pluto.tv/search?q={query}",
     "vix": "https://vix.com/search?q={query}",
-    
+
     # ============================================================
     #  NOTICIAS
     # ============================================================
@@ -131,7 +142,7 @@ APP_URLS = {
     "infobae": "https://www.infobae.com/search?q={query}",
     "clarin": "https://www.clarin.com/buscar?q={query}",
     "lanacion": "https://www.lanacion.com.ar/buscar/?q={query}",
-    
+
     # ============================================================
     #  DEPORTES
     # ============================================================
@@ -141,7 +152,7 @@ APP_URLS = {
     "sport": "https://www.sport.es/buscar?q={query}",
     "goal": "https://www.goal.com/search?q={query}",
     "transfermarkt": "https://www.transfermarkt.es/suche/ergebnis?query={query}",
-    
+
     # ============================================================
     #  TECNOLOGÍA Y PROGRAMACIÓN
     # ============================================================
@@ -162,7 +173,7 @@ APP_URLS = {
     "npm": "https://www.npmjs.com/search?q={query}",
     "docker": "https://hub.docker.com/search?q={query}",
     "crates": "https://crates.io/search?q={query}",
-    
+
     # ============================================================
     #  EDUCACIÓN
     # ============================================================
@@ -176,7 +187,7 @@ APP_URLS = {
     "brilliant": "https://brilliant.org/search/?q={query}",
     "datacamp": "https://www.datacamp.com/search?q={query}",
     "duolingo": "https://www.duolingo.com/search?q={query}",
-    
+
     # ============================================================
     #  VIAJES Y MAPAS
     # ============================================================
@@ -193,7 +204,7 @@ APP_URLS = {
     "avianca": "https://www.avianca.com/search?q={query}",
     "latam": "https://www.latam.com/search?q={query}",
     "satena": "https://www.satena.com/search?q={query}",
-    
+
     # ============================================================
     #  FINANZAS Y TRABAJO
     # ============================================================
@@ -207,7 +218,7 @@ APP_URLS = {
     "dolar_hoy": "https://dolarhoy.com/search?q={query}",
     "binance": "https://www.binance.com/en/search?q={query}",
     "coinmarketcap": "https://coinmarketcap.com/search/?q={query}",
-    
+
     # ============================================================
     #  JUEGOS
     # ============================================================
@@ -219,7 +230,7 @@ APP_URLS = {
     "gog": "https://www.gog.com/en/games?search={query}",
     "itchio": "https://itch.io/search?q={query}",
     "gamejolt": "https://gamejolt.com/search?q={query}",
-    
+
     # ============================================================
     #  SALUD Y BIENESTAR
     # ============================================================
@@ -230,7 +241,7 @@ APP_URLS = {
     "calm": "https://www.calm.com/search?q={query}",
     "headspace": "https://www.headspace.com/search?q={query}",
     "myfitnesspal": "https://www.myfitnesspal.com/search?q={query}",
-    
+
     # ============================================================
     #  LEGALES Y GOBIERNO
     # ============================================================
@@ -239,7 +250,7 @@ APP_URLS = {
     "migracion": "https://www.migracioncolombia.gov.co/search?q={query}",
     "registraduria": "https://www.registraduria.gov.co/search?q={query}",
     "icfes": "https://www.icfes.gov.co/search?q={query}",
-    
+
     # ============================================================
     #  HERRAMIENTAS
     # ============================================================
@@ -261,7 +272,7 @@ APP_URLS = {
     "onedrive": "https://onedrive.live.com/search?q={query}",
     "drive": "https://drive.google.com/drive/search?q={query}",
     "wetransfer": "https://wetransfer.com/search?q={query}",
-    
+
     # ============================================================
     #  BANCOS (COLOMBIA)
     # ============================================================
@@ -280,6 +291,80 @@ APP_URLS = {
 }
 
 # ============================================================
+#  HELPERS DE BAJO NIVEL (WINDOWS API)
+# ============================================================
+
+def _get_window_title_by_hwnd(hwnd) -> str:
+    """
+    Lee el título REAL y actual de una ventana por su handle.
+    Importante: el título de la ventana del navegador cambia según
+    la pestaña activa, así que esto nos sirve para detectar en qué
+    pestaña estamos parados en cada momento.
+    """
+    try:
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        buff = ctypes.create_unicode_buffer(length + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+        return buff.value
+    except Exception:
+        return ""
+
+
+def close_tab_by_name(target_window, tab_name: str, player=None, max_tabs: int = 30) -> str:
+    """
+    Busca, entre las pestañas abiertas de la ventana activa, una cuyo
+    título contenga 'tab_name' y la cierra — SIN afectar la pestaña que
+    el usuario tenía activa, salvo que sea justamente esa la que coincide.
+
+    Funciona cambiando de pestaña con Ctrl+Tab y leyendo el título real
+    de la ventana en cada paso (el título de la ventana refleja siempre
+    la pestaña activa en Chrome/Brave/Edge/Opera/Vivaldi/Firefox).
+    """
+    hwnd = target_window._hWnd
+    tab_name_lower = tab_name.lower().strip()
+
+    original_title = _get_window_title_by_hwnd(hwnd)
+
+    # Caso 1: la pestaña activa ya es la que buscamos
+    if tab_name_lower in original_title.lower():
+        pyautogui.hotkey('ctrl', 'w')
+        if player:
+            player.write_log(f"🗑️ Pestaña activa '{original_title[:40]}' cerrada.")
+        return f"✅ Pestaña '{tab_name}' (activa) cerrada."
+
+    seen_titles = {original_title}
+    found = False
+
+    for _ in range(max_tabs):
+        pyautogui.hotkey('ctrl', 'tab')
+        time.sleep(0.18)
+        current_title = _get_window_title_by_hwnd(hwnd)
+
+        # Dimos toda la vuelta y no encontramos nada nuevo
+        if current_title in seen_titles:
+            break
+        seen_titles.add(current_title)
+
+        if tab_name_lower in current_title.lower():
+            pyautogui.hotkey('ctrl', 'w')
+            found = True
+            if player:
+                player.write_log(f"🗑️ Pestaña '{current_title[:40]}' cerrada.")
+            return f"✅ Pestaña que coincide con '{tab_name}' cerrada ({current_title[:40]})."
+
+    if not found:
+        # Regresar a la pestaña original sin dejar rastro, límite acotado
+        attempts = 0
+        while attempts < max_tabs and _get_window_title_by_hwnd(hwnd) != original_title:
+            pyautogui.hotkey('ctrl', 'tab')
+            time.sleep(0.15)
+            attempts += 1
+        return f"❌ No se encontró ninguna pestaña que coincida con '{tab_name}'."
+
+    return f"❌ No se encontró ninguna pestaña que coincida con '{tab_name}'."
+
+
+# ============================================================
 #  FUNCIÓN DE BÚSQUEDA EN APPS
 # ============================================================
 
@@ -290,20 +375,20 @@ def search_in_apps(app_name: str, query: str, player=None) -> str:
     app_name_lower = app_name.lower()
     encoded_query = urllib.parse.quote(query)
     target_url = None
-    
+
     # Buscar coincidencia exacta o parcial
     for key, url_template in APP_URLS.items():
         if app_name_lower == key or app_name_lower in key or key in app_name_lower:
             target_url = url_template.format(query=encoded_query)
             break
-    
+
     if not target_url:
         # Fallback: búsqueda en Google con site específico
         target_url = f"https://www.google.com/search?q=site:{app_name}.com+{encoded_query}"
-    
+
     if player:
         player.write_log(f"🌐 Abriendo {app_name.capitalize()} para '{query}'...")
-    
+
     webbrowser.open(target_url)
     return f"Abriendo {app_name.capitalize()} con la búsqueda '{query}'."
 
@@ -317,16 +402,16 @@ def search_with_engine(engine: str, query: str, player=None) -> str:
     """
     engine_lower = engine.lower()
     encoded_query = urllib.parse.quote(query)
-    
+
     if engine_lower in SEARCH_ENGINES:
         url = SEARCH_ENGINES[engine_lower].format(query=encoded_query)
     else:
         # Fallback a Google
         url = SEARCH_ENGINES["google"].format(query=encoded_query)
-    
+
     if player:
         player.write_log(f"🔍 Buscando en {engine.capitalize()}: '{query}'...")
-    
+
     webbrowser.open(url)
     return f"Buscando '{query}' en {engine.capitalize()}."
 
@@ -337,14 +422,14 @@ def search_with_engine(engine: str, query: str, player=None) -> str:
 def browser_control(parameters: dict, player=None) -> str:
     """
     Controla el navegador activo del usuario mediante simulación de teclado.
-    
+
     Acciones soportadas:
     - go_to: Navegar a una URL
     - search: Buscar en Google
     - search_app: Buscar en una app específica (Rappi, Uber, TikTok, etc.)
     - search_engine: Buscar en un motor específico (google, bing, duckduckgo)
     - new_tab: Abrir nueva pestaña
-    - close_tab: Cerrar pestaña actual
+    - close_tab: Cerrar pestaña actual, o una específica si se pasa 'tab_name'
     - scroll: Scroll (up/down)
     - zoom: Zoom (in/out/reset)
     - back: Retroceder
@@ -354,8 +439,11 @@ def browser_control(parameters: dict, player=None) -> str:
     - print: Imprimir
     - save: Guardar
     - find: Buscar en página
-    - fullscreen: Pantalla completa
-    - history: Historial
+    - fullscreen: Pantalla completa (toggle)
+    - windowed / exit_fullscreen: Salir de pantalla completa (alias de fullscreen)
+    - restore: Restaurar ventana a modo ventana normal
+    - history: Abrir historial
+    - clear_history: Borrar historial / datos de navegación
     - bookmarks: Marcadores
     - devtools: Herramientas de desarrollador
     - downloads: Descargas
@@ -366,13 +454,13 @@ def browser_control(parameters: dict, player=None) -> str:
     - switch_tab: Cambiar de pestaña (next/prev)
     - close_window: Cerrar ventana
     - minimize: Minimizar ventana
-    - maximize: Maximizar ventana
+    - maximize: Maximizar ventana (restaura primero si estaba minimizada)
     """
     action = parameters.get("action", "").lower()
-    
+
     # 1. Encontrar el navegador activo
     target_window = None
-    
+
     for win in gw.getAllWindows():
         if win.title.strip():
             for kw in BROWSER_KEYWORDS:
@@ -381,14 +469,12 @@ def browser_control(parameters: dict, player=None) -> str:
                     break
         if target_window:
             break
-    
+
     # Si no se encuentra, buscar por clase de ventana
     if not target_window:
         for win in gw.getAllWindows():
             if win._hWnd:
                 try:
-                    import ctypes
-                    from ctypes import wintypes
                     user32 = ctypes.windll.user32
                     class_name = ctypes.create_unicode_buffer(256)
                     user32.GetClassNameW(win._hWnd, class_name, 256)
@@ -396,25 +482,26 @@ def browser_control(parameters: dict, player=None) -> str:
                     if any(kw.lower() in class_name_str for kw in ["chrome", "brave", "edge", "firefox", "opera"]):
                         target_window = win
                         break
-                except:
+                except Exception:
                     pass
-    
+
     if not target_window:
         return "❌ No se encontró ningún navegador (Brave, Chrome, Edge, Firefox, etc.) abierto."
-    
+
     try:
         # 2. Restaurar y Enfocar la ventana
         if target_window.isMinimized:
             target_window.restore()
+            time.sleep(0.1)
         target_window.activate()
         time.sleep(0.15)
-        
+
         win_title = target_window.title[:50]
-        
+
         # ============================================================
         #  ACCIONES DE NAVEGACIÓN
         # ============================================================
-        
+
         if action == "go_to":
             url = parameters.get("url", "")
             if not url:
@@ -426,13 +513,13 @@ def browser_control(parameters: dict, player=None) -> str:
             pyautogui.write(url, interval=0.005)
             pyautogui.press('enter')
             return f"✅ Navegando a {url} en '{win_title}'."
-        
+
         elif action == "search":
             query = parameters.get("query", "")
             engine = parameters.get("engine", "google").lower()
             if not query:
                 return "❌ Error: Falta la búsqueda (query)."
-            
+
             if engine in SEARCH_ENGINES:
                 url = SEARCH_ENGINES[engine].format(query=urllib.parse.quote(query))
                 pyautogui.hotkey('ctrl', 'l')
@@ -442,7 +529,7 @@ def browser_control(parameters: dict, player=None) -> str:
                 return f"✅ Buscando '{query}' en {engine.capitalize()} en '{win_title}'."
             else:
                 return f"❌ Motor '{engine}' no soportado."
-        
+
         elif action == "search_app":
             app_name = parameters.get("app_name", "")
             query = parameters.get("query", "")
@@ -450,20 +537,20 @@ def browser_control(parameters: dict, player=None) -> str:
                 return "❌ Error: Falta el nombre de la app (app_name)."
             if not query:
                 return "❌ Error: Falta la búsqueda (query)."
-            
+
             return search_in_apps(app_name, query, player)
-        
+
         elif action == "search_engine":
             engine = parameters.get("engine", "google")
             query = parameters.get("query", "")
             if not query:
                 return "❌ Error: Falta la búsqueda (query)."
             return search_with_engine(engine, query, player)
-        
+
         # ============================================================
         #  ACCIONES DE PESTAÑAS
         # ============================================================
-        
+
         elif action == "new_tab":
             url = parameters.get("url", "")
             pyautogui.hotkey('ctrl', 't')
@@ -475,15 +562,20 @@ def browser_control(parameters: dict, player=None) -> str:
                 pyautogui.press('enter')
                 return f"✅ Nueva pestaña abierta navegando a {url}."
             return "✅ Nueva pestaña abierta."
-        
+
         elif action == "close_tab":
+            # Si nos dicen el nombre/título de la pestaña, cerramos ESA
+            # específicamente, sin tocar la pestaña en la que estábamos.
+            tab_name = parameters.get("tab_name", "") or parameters.get("name", "")
+            if tab_name:
+                return close_tab_by_name(target_window, tab_name, player)
             pyautogui.hotkey('ctrl', 'w')
             return "✅ Pestaña actual cerrada."
-        
+
         elif action == "duplicate":
             pyautogui.hotkey('ctrl', 'shift', 'd')
             return "✅ Pestaña duplicada."
-        
+
         elif action == "switch_tab":
             direction = parameters.get("direction", "next").lower()
             if direction == "next":
@@ -491,19 +583,19 @@ def browser_control(parameters: dict, player=None) -> str:
             else:
                 pyautogui.hotkey('ctrl', 'shift', 'tab')
             return f"✅ Cambiando a la {'siguiente' if direction=='next' else 'anterior'} pestaña."
-        
+
         elif action == "pin":
             pyautogui.hotkey('ctrl', 'shift', 'p')
             return "✅ Pestaña fijada/desfijada."
-        
+
         # ============================================================
         #  ACCIONES DE SCROLL Y ZOOM
         # ============================================================
-        
+
         elif action == "scroll":
             direction = parameters.get("direction", "down").lower()
             amount = int(parameters.get("amount", 1))
-            
+
             if direction == "down":
                 for _ in range(amount):
                     pyautogui.press('pgdn')
@@ -517,7 +609,7 @@ def browser_control(parameters: dict, player=None) -> str:
             elif direction == "bottom":
                 pyautogui.press('end')
             return f"✅ Scroll {'hacia abajo' if direction=='down' else 'hacia arriba'} completado."
-        
+
         elif action == "zoom":
             direction = parameters.get("direction", "in").lower()
             if direction == "in":
@@ -527,99 +619,139 @@ def browser_control(parameters: dict, player=None) -> str:
             elif direction == "reset":
                 pyautogui.hotkey('ctrl', '0')
             return f"✅ Zoom {direction} completado."
-        
+
         # ============================================================
-        #  ACCIONES DE NAVEGACIÓN
+        #  ACCIONES DE NAVEGACIÓN (HISTORIAL)
         # ============================================================
-        
+
         elif action == "back":
             pyautogui.hotkey('alt', 'left')
             return "✅ Retrocediendo en el historial."
-        
+
         elif action == "forward":
             pyautogui.hotkey('alt', 'right')
             return "✅ Avanzando en el historial."
-        
+
         elif action in ["refresh", "reload"]:
             pyautogui.hotkey('ctrl', 'r')
             return "✅ Página recargada."
-        
+
         elif action == "refresh_hard":
             pyautogui.hotkey('ctrl', 'shift', 'r')
             return "✅ Página recargada (sin caché)."
-        
+
         # ============================================================
-        #  ACCIONES DE VENTANA
+        #  ACCIONES DE VENTANA (mejoradas)
         # ============================================================
-        
+
         elif action == "close_window":
             pyautogui.hotkey('alt', 'f4')
             return "✅ Ventana cerrada."
-        
+
         elif action == "minimize":
+            target_window.minimize()
+            return "✅ Ventana minimizada."
+
+        elif action == "maximize":
+            # FIX: si venía minimizada o en fullscreen, primero la
+            # restauramos para asegurar que el maximize() realmente
+            # "la agrande de nuevo" en modo ventana normal.
+            if target_window.isMinimized:
+                target_window.restore()
+                time.sleep(0.15)
+                target_window.activate()
+                time.sleep(0.1)
+            try:
+                target_window.maximize()
+            except Exception:
+                # Fallback por si el backend de pygetwindow falla:
+                # restauramos y reintentamos una vez.
+                target_window.restore()
+                time.sleep(0.1)
+                target_window.maximize()
+            return "✅ Ventana maximizada."
+
+        elif action == "restore":
+            # Vuelve a modo ventana normal (ni minimizada, ni maximizada,
+            # ni fullscreen).
             if target_window.isMinimized:
                 target_window.restore()
             else:
-                target_window.minimize()
-            return "✅ Ventana minimizada."
-        
-        elif action == "maximize":
-            target_window.maximize()
-            return "✅ Ventana maximizada."
-        
+                target_window.restore()
+            time.sleep(0.1)
+            return "✅ Ventana restaurada a modo ventana."
+
         # ============================================================
         #  ACCIONES DE HERRAMIENTAS
         # ============================================================
-        
-        elif action == "fullscreen":
+
+        elif action in ("fullscreen", "windowed", "exit_fullscreen", "unfullscreen"):
+            # F11 hace toggle en todos los navegadores. Nos aseguramos
+            # de que la ventana esté activa y no minimizada antes de
+            # enviar la tecla, si no, el toggle no aplica a nada.
+            if target_window.isMinimized:
+                target_window.restore()
+                time.sleep(0.1)
+                target_window.activate()
+                time.sleep(0.1)
             pyautogui.press('f11')
             return "✅ Pantalla completa activada/desactivada."
-        
+
         elif action == "history":
             pyautogui.hotkey('ctrl', 'h')
             return "✅ Abriendo historial."
-        
+
+        elif action in ("clear_history", "delete_history", "borrar_historial"):
+            # Ctrl+Shift+Supr abre el diálogo nativo de "Borrar datos de
+            # navegación" en Chrome, Brave, Edge, Opera, Vivaldi y Firefox.
+            # A propósito NO confirmamos el borrado automáticamente:
+            # el usuario elige el rango de tiempo y confirma, para
+            # evitar borrar datos sin que se den cuenta.
+            pyautogui.hotkey('ctrl', 'shift', 'delete')
+            return "✅ Abriendo el diálogo para borrar historial/datos de navegación. Confirma el rango y presiona 'Borrar datos'."
+
         elif action == "bookmarks":
             pyautogui.hotkey('ctrl', 'shift', 'b')
             return "✅ Mostrando/ocultando marcadores."
-        
+
         elif action == "devtools":
             pyautogui.hotkey('ctrl', 'shift', 'i')
             return "✅ Abriendo herramientas de desarrollador."
-        
+
         elif action == "console":
             pyautogui.hotkey('ctrl', 'shift', 'j')
             return "✅ Abriendo consola de desarrollador."
-        
+
         elif action == "downloads":
             pyautogui.hotkey('ctrl', 'j')
             return "✅ Abriendo descargas."
-        
+
         elif action == "settings":
-            # En Chrome/Edge: Alt+E, en Firefox: Alt+T
+            # En Chrome/Edge/Brave/Opera: Alt+E abre el menú, desde ahí
+            # se puede navegar a Configuración. En Firefox no aplica igual.
             pyautogui.hotkey('alt', 'e')
-            return "✅ Abriendo configuración."
-        
+            return "✅ Abriendo menú de configuración."
+
         elif action == "print":
             pyautogui.hotkey('ctrl', 'p')
             return "✅ Abriendo diálogo de impresión."
-        
+
         elif action == "save":
             pyautogui.hotkey('ctrl', 's')
             return "✅ Guardando página actual."
-        
+
         elif action == "find":
             pyautogui.hotkey('ctrl', 'f')
             return "✅ Abriendo buscador en página."
-        
+
         elif action == "mute":
             pyautogui.hotkey('ctrl', 'm')
             return "✅ Silenciando/activando pestaña."
-        
+
         # ============================================================
         #  ACCIONES DE YOUTUBE
         # ============================================================
-        
+
         elif action == "play_song":
             song_title = parameters.get("song_title", "")
             if not song_title:
@@ -631,26 +763,29 @@ def browser_control(parameters: dict, player=None) -> str:
             time.sleep(2)
             pyautogui.press('enter')  # Reproducir el primer resultado
             return f"✅ Reproduciendo '{song_title}' en YouTube."
-        
+
         elif action == "youtube_play":
             # Control de reproducción YouTube (si está abierto)
             pyautogui.press('space')
             return "✅ Play/Pausa en YouTube."
-        
+
         elif action == "youtube_next":
-            pyautogui.press('shift', 'n')
+            # FIX: pyautogui.press() no acepta combinaciones de teclas,
+            # el atajo Shift+N debe enviarse con hotkey().
+            pyautogui.hotkey('shift', 'n')
             return "✅ Siguiente video en YouTube."
-        
+
         elif action == "youtube_prev":
-            pyautogui.press('shift', 'p')
+            # FIX: mismo bug que arriba, corregido con hotkey().
+            pyautogui.hotkey('shift', 'p')
             return "✅ Video anterior en YouTube."
-        
+
         # ============================================================
         #  ACCIÓN POR DEFECTO
         # ============================================================
-        
+
         else:
-            return f"""❌ Acción '{action}' no soportada.
+            return """❌ Acción no soportada.
 
 📋 Acciones disponibles:
 
@@ -662,7 +797,7 @@ def browser_control(parameters: dict, player=None) -> str:
 
 📑 PESTAÑAS:
   • new_tab [url]         - Nueva pestaña
-  • close_tab             - Cerrar pestaña
+  • close_tab [tab_name]  - Cerrar pestaña actual, o la que coincida con tab_name
   • duplicate             - Duplicar pestaña
   • switch_tab [next/prev] - Cambiar pestaña
   • pin                   - Fijar pestaña
@@ -679,11 +814,13 @@ def browser_control(parameters: dict, player=None) -> str:
 🪟 VENTANA:
   • close_window          - Cerrar ventana
   • minimize              - Minimizar
-  • maximize              - Maximizar
+  • maximize              - Maximizar / agrandar de nuevo (restaura primero si hace falta)
+  • restore               - Volver a modo ventana normal
+  • fullscreen / windowed - Alternar pantalla completa
 
 🛠️ HERRAMIENTAS:
-  • fullscreen            - Pantalla completa
   • history               - Historial
+  • clear_history         - Borrar historial / datos de navegación
   • bookmarks             - Marcadores
   • devtools              - DevTools
   • downloads             - Descargas
@@ -697,6 +834,6 @@ def browser_control(parameters: dict, player=None) -> str:
   • youtube_next          - Siguiente video
   • youtube_prev          - Video anterior
 """
-            
+
     except Exception as e:
         return f"❌ Error al controlar el navegador: {str(e)}"

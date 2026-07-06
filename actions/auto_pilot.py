@@ -29,7 +29,8 @@ import keyboard
 from PIL import ImageGrab, Image
 
 try:
-    import pytesseract
+    import importlib
+    pytesseract = importlib.import_module('pytesseract')
     TESSERACT_AVAILABLE = True
 except ImportError:
     pytesseract = None

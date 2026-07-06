@@ -19,13 +19,13 @@ def _load_config() -> dict:
     except Exception:
         return {}
 
-def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash") -> str:
+def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash", force_provider: str = None) -> str:
     """
     Routes complex queries to either OpenRouter (Cloud) or Ollama (Local AI)
-    based on user settings.
+    based on user settings or force_provider flag.
     """
     cfg = _load_config()
-    provider = cfg.get("ai_provider", "openrouter").lower().strip()
+    provider = force_provider.lower().strip() if force_provider else cfg.get("ai_provider", "openrouter").lower().strip()
 
     # Load active personality dynamically
     active_pers_prompt = ""

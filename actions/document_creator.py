@@ -42,7 +42,7 @@ def document_creator(parameters: dict, player=None) -> str:
             pass
 
     if not file_path:
-        base_descargas = Path(os.path.join(os.environ["USERPROFILE"], "Downloads", "Ilum_Downloads", "Documentos"))
+        base_descargas = Path(os.path.join(os.environ["USERPROFILE"], "Downloads", "Nexus_Downloads", "Documentos"))
         base_descargas.mkdir(parents=True, exist_ok=True)
         ext = ".docx" if action in ("word", "google_doc") else (".xlsx" if action in ("excel", "google_sheet") else ".txt")
         file_path = base_descargas / f"{safe_title}_{timestamp}{ext}"
