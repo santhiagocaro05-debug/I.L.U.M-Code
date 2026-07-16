@@ -72,7 +72,7 @@ def download_youtube(parameters: dict, player=None, speak=None) -> str:
         return "No se pudo obtener el enlace. Por favor, proporciona una URL válida."
 
     # Ruta de descargas
-    base_descargas = os.path.join(os.path.expanduser("~"), "Downloads", "Ilum_Downloads")
+    base_descargas = os.path.join(os.path.expanduser("~"), "Downloads", "Nexus_Downloads")
     if opcion == '1':
         ruta_descargas = os.path.join(base_descargas, "Videos")
     else:

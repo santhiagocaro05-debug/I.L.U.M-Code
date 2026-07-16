@@ -25,7 +25,7 @@ def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash", force_p
     based on user settings or force_provider flag.
     """
     cfg = _load_config()
-    provider = force_provider.lower().strip() if force_provider else cfg.get("ai_provider", "openrouter").lower().strip()
+    provider = force_provider.lower().strip() if force_provider else cfg.get("active_ai_provider", "openrouter").lower().strip()
 
     # Load active personality dynamically
     active_pers_prompt = ""
@@ -89,25 +89,39 @@ def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash", force_p
         except Exception as e:
             return f"Error en la llamada a Ollama local: {str(e)}"
 
-    # 2. CLOUD OPENROUTER ROUTING (Default)
+    # 2. CLOUD ROUTING (OpenAI, Grok, Groq, OpenRouter)
     else:
-        api_key = cfg.get("openrouter_api_key", "").strip()
+        # Determine API URL, Auth Key, and Model based on provider
+        if provider == "openai":
+            api_key = cfg.get("openai_api_key", "").strip()
+            url = "https://api.openai.com/v1/chat/completions"
+            active_model = "gpt-4o-mini"
+        elif provider == "grok":
+            api_key = cfg.get("grok_api_key", "").strip()
+            url = "https://api.x.ai/v1/chat/completions"
+            active_model = "grok-beta"
+        elif provider == "groq":
+            api_key = cfg.get("groq_api_key", "").strip()
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            active_model = "llama3-70b-8192"
+        else: # Default openrouter
+            provider = "openrouter"
+            api_key = cfg.get("openrouter_api_key", "").strip()
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            active_model = cfg.get("openrouter_model", model).strip()
+
         if not api_key:
             return (
-                "No se encontró una clave de OpenRouter en la configuración. "
-                "Por favor, añade 'openrouter_api_key' en config/api_keys.json o cambia a Ollama Local."
+                f"No se encontró una clave de {provider.upper()} en la configuración. "
+                f"Por favor, añade '{provider}_api_key' en config/api_keys.json o cambia de proveedor."
             )
 
-        url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": "https://github.com/ilum-beta",
             "X-Title": "ILUM AI Assistant",
             "Content-Type": "application/json"
         }
-        
-        # Override default model with config model if specified
-        active_model = cfg.get("openrouter_model", model).strip()
         
         payload = {
             "model": active_model,
@@ -130,7 +144,7 @@ def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash", force_p
                 if "choices" in response_data and len(response_data["choices"]) > 0:
                     return response_data["choices"][0]["message"]["content"]
                 else:
-                    return "Error: Respuesta vacía o inesperada de OpenRouter."
+                    return f"Error: Respuesta vacía o inesperada de {provider.upper()}."
         except urllib.error.HTTPError as e:
             try:
                 error_info = e.read().decode("utf-8")
@@ -138,10 +152,9 @@ def openrouter_agent(query: str, model: str = "google/gemini-2.5-flash", force_p
                 error_info = ""
             if e.code == 401:
                 return (
-                    "Error de OpenRouter (HTTP 401 - No Autorizado): Tus credenciales de OpenRouter son inválidas "
-                    "o estás intentando usar un modelo de pago sin saldo en tu cuenta de OpenRouter. "
-                    "Por favor, añade fondos en https://openrouter.ai o verifica tu openrouter_api_key."
+                    f"Error de {provider.upper()} (HTTP 401 - No Autorizado): Tus credenciales son inválidas. "
+                    "Verifica tu API Key en la configuración."
                 )
-            return f"Error de OpenRouter (HTTP {e.code}): {error_info}"
+            return f"Error de {provider.upper()} (HTTP {e.code}): {error_info}"
         except Exception as e:
-            return f"Error al conectar con OpenRouter: {str(e)}"
+            return f"Error al conectar con {provider.upper()}: {str(e)}"
