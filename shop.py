@@ -98,6 +98,21 @@ PRODUCTS = [
         "glow": "rgba(79,195,247,0.25)",
         "gradient": ("rgba(10,70,140,0.45)", "rgba(5,30,80,0.30)"),
     },
+    {
+        "id": "widget_customization",
+        "name": "Widgets PRO",
+        "subtitle": "Estilos y colores personalizados para widgets",
+        "description": "Aplica fondos holográficos y bordes neón a todos los widgets del panel principal sin perder rendimiento.",
+        "price": 0.00,
+        "price_label": "GRATIS",
+        "icon": "fa5s.th-large",
+        "icon_color": "#00ffcc",
+        "accent": "#00ffcc",
+        "badge": "PRO",
+        "badge_color": "#00e6b8",
+        "glow": "rgba(0,255,204,0.25)",
+        "gradient": ("rgba(0,120,100,0.45)", "rgba(0,60,50,0.30)"),
+    }
 ]
 
 # ── métodos de pago ──────────────────────────────────────────────────────────
@@ -783,7 +798,7 @@ class ShopWidget(QWidget):
             card = ProductCard(product, unlocked=unlocked)
             card.buy_requested.connect(self._open_modal)
             row, col = divmod(i, 2)
-            self.grid_layout.addWidget(card, row, col)
+            self.grid_layout.addWidget(card, row, col, Qt.AlignmentFlag.AlignTop)
             self.cards[product["id"]] = card
 
         cl.addWidget(grid_w)

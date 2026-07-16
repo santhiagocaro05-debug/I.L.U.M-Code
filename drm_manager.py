@@ -144,7 +144,10 @@ def verify_response_signature(res: dict) -> bool:
 
 def is_online_mode() -> bool:
     """Retorna True si las llaves públicas de Supabase están configuradas en el cliente."""
-    url, anon = _load_supabase_client_keys()
+    try:
+        url, anon = _load_supabase_client_keys()
+    except RuntimeError:
+        return False
     return bool(url and anon and requests is not None)
 
 def get_hwid_components() -> dict:
@@ -204,8 +207,8 @@ def get_hwid() -> str:
 def validate_license(license_key: str) -> dict:
     """
     Valida una clave de licencia frente al HWID de la máquina actual utilizando Supabase.
-    Si el servidor no está configurado, ocurre un error de red o la función no existe (404),
-    se realiza una validación local/offline transparente para soporte del repositorio en GitHub.
+    Si el servidor no está configurado o hay un error de red, la validación
+    FALLA de forma segura (fail-closed) en vez de aceptar cualquier clave.
     """
     current_hwid = get_hwid()
     license_key = license_key.strip()
@@ -216,7 +219,6 @@ def validate_license(license_key: str) -> dict:
             "message": "Por favor, ingresa tu Clave de Licencia."
         }
 
-    # Intentar validación online si las credenciales existen y está en línea
     if is_online_mode():
         url, anon = _load_supabase_client_keys()
         headers = {
@@ -243,25 +245,26 @@ def validate_license(license_key: str) -> dict:
                 if verify_response_signature(res):
                     print(f"[Supabase Client] Validación online completada: {res.get('message')}")
                     return res
+                return {
+                    "success": False,
+                    "message": "No se pudo verificar la autenticidad de la respuesta del servidor."
+                }
             else:
-                print(f"[Supabase Client] Servidor online retornó código {r.status_code}. Pasando a modo offline...")
+                print(f"[Supabase Client] Servidor online retornó código {r.status_code}.")
+                return {
+                    "success": False,
+                    "message": "No se pudo contactar al servidor de licencias. Intenta de nuevo."
+                }
         except Exception as e:
-            print(f"[Supabase Client] Error en conexión online: {e}. Pasando a modo offline...")
+            print(f"[Supabase Client] Error en conexión online: {e}.")
+            return {
+                "success": False,
+                "message": "Error de conexión al validar tu licencia. Revisa tu internet e intenta de nuevo."
+            }
 
-    print(f"[Supabase Client] No se pudo validar la licencia con el servidor (Offline). Realizando validación local/offline...")
-    if license_key:
-        return {
-            "success": True,
-            "message": "Validación local/offline completada (Soporte offline).",
-            "email": "local@domain.com",
-            "hwid": current_hwid,
-            "signature": "LOCAL_SIGNATURE",
-            "created_at": None,
-            "days_remaining": None
-        }
     return {
         "success": False,
-        "message": "Clave de licencia vacía o no válida."
+        "message": "El servidor de licencias no está configurado en este equipo."
     }
 
 def reset_hwid(license_key: str, email: str) -> dict:
@@ -307,7 +310,9 @@ def reset_hwid(license_key: str, email: str) -> dict:
 
 def recover_license(email: str) -> dict:
     """
-    Busca todas las licencias del correo desde el servidor Supabase y simula el envío del email en email_outbox.log.
+    Busca todas las licencias del correo desde el servidor Supabase, las
+    devuelve en 'keys' para que la UI pueda mostrarlas/guardarlas, y además
+    simula el envío del email en email_outbox.log.
     """
     email = email.strip().lower()
 
@@ -344,26 +349,51 @@ def recover_license(email: str) -> dict:
         keys_str = "\n".join([f"- {k}" for k in user_keys])
         email_body = f"""
 ============================================================
-📧 SIMULACIÓN DE CORREO ENVIADO (VÍA SUPABASE ONLINE)
+📧 ARCHIVO ENVIADO (VÍA SUPABASE ONLINE)
 Destinatario: {email}
-Asunto: 🔑 Recuperación de Licencia - NEXUS
+Asunto: 🔐 Recuperación de Licencia - NEXUS
 Cuerpo:
+
 Hola,
-Has solicitado recuperar tus claves de licencia para NEXUS.
-Aquí tienes tus claves asociadas a este correo electrónico (obtenidas desde la nube):
 
+Hemos recibido tu solicitud de recuperación de claves de licencia para **NEXUS**.
+
+A continuación, encontrarás las claves asociadas a tu cuenta de correo electrónico. **Por motivos de seguridad, este mensaje solo estará disponible durante las próximas 24 horas.**
+
+---
+🗝️ Tus claves de licencia:
+---
 {keys_str}
+---
 
-Guárdalas en un lugar seguro.
+⚠️ **Recomendaciones importantes:**
+- Guarda estas claves en un lugar seguro (no las compartas con nadie).
+- Te sugerimos almacenarlas en un gestor de contraseñas.
+- No respondas a este correo con las claves visibles.
+- Si no solicitaste esta recuperación, ignora este mensaje y contacta con soporte de inmediato.
+
+Si tienes alguna duda o problema, no dudes en escribirnos a:
+📩 nexuuss7262@gmail.com
+
+O visita nuestra sección de ayuda en:
+🌐 https://proyect-nexus.vercel.app
+
+Gracias por confiar en NEXUS.
+
 Atentamente,
-El Equipo de NEXUS
+**El Equipo de NEXUS**
+🔒 Seguridad y confianza ante todo.
 ============================================================
 \n"""
         with open(EMAIL_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(email_body)
             
         print(f"[Supabase Client] Email de recuperación simulado para {email} (claves obtenidas de la nube)")
-        return {"success": True, "message": "Hemos enviado las licencias registradas a tu correo."}
+        return {
+            "success": True,
+            "message": "Hemos enviado las licencias registradas a tu correo.",
+            "keys": user_keys
+        }
         
     except Exception as e:
         print(f"[Supabase Client] Error al recuperar licencias: {e}")

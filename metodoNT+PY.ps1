@@ -131,10 +131,7 @@ Push-Location $ProjectPath
 Step "Actualizando herramientas de compilacion"
 & $venvPython -m pip install --upgrade pip setuptools wheel
 & $venvPython -m pip install pyinstaller
-
-if (-not $SkipCorePyd) {
-    & $venvPython -m pip install nuitka ordered-set zstandard
-}
+& $venvPython -m pip install pyarmor ordered-set zstandard
 
 if ($InstallDeps) {
     if (Test-Path -LiteralPath "requirements.txt") {
@@ -246,21 +243,17 @@ Si se queda cargando, casi siempre falta uno de los Redirect URI o no se guardar
 '@ | Set-Content -LiteralPath "SPOTIFY_SETUP.txt" -Encoding UTF8
 }
 
-if (-not $SkipCorePyd -and (Test-Path -LiteralPath "core_main.py")) {
-    Step "Compilando core_main.py a .pyd con Nuitka"
-    & $venvPython -m nuitka --module "core_main.py" --output-dir "build\compiled_core" --remove-output --assume-yes-for-downloads
-    $pyd = Get-ChildItem -LiteralPath "build\compiled_core" -Filter "core_main*.pyd" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pyd) {
-        Copy-Item -LiteralPath $pyd.FullName -Destination ".\" -Force
-        Remove-Item -LiteralPath "core_main.py" -Force
-        Ok "Nucleo protegido: $($pyd.Name)"
-    } else {
-        Fail "Nuitka no genero core_main*.pyd. Instala Visual Studio Build Tools o usa -SkipCorePyd."
-    }
-} elseif ($SkipCorePyd) {
-    Warn "Saltando compilacion .pyd del nucleo por parametro -SkipCorePyd."
+Step "Encriptando y ofuscando todo el codigo fuente con PyArmor"
+# Ejecutamos PyArmor sobre toda la carpeta staging
+$pyarmorExe = Join-Path (Split-Path $venvPython) "pyarmor.exe"
+& $pyarmorExe gen -O pyarmor_dist -r .
+if (Test-Path "pyarmor_dist") {
+    # Mover archivos ofuscados de vuelta al raiz staging
+    Copy-Item -Path "pyarmor_dist\*" -Destination "." -Recurse -Force
+    Remove-Item "pyarmor_dist" -Recurse -Force
+    Ok "Codigo fuente ofuscado correctamente."
 } else {
-    Warn "No encontre core_main.py; se compilara lo que exista en el proyecto."
+    Fail "Fallo la ofuscacion con PyArmor."
 }
 
 Step "Compilando NEXUS con PyInstaller en modo seguro"  # ✅ CAMBIADO
@@ -330,6 +323,9 @@ $pyiArgs = @(
     "--hidden-import", "pyaudio",
     "--hidden-import", "tkinter",
     "--hidden-import", "playwright",
+    "--hidden-import", "serial",
+    "--hidden-import", "openai",
+    "--hidden-import", "groq",
     "--hidden-import", "pptx",
     "--hidden-import", "ultralytics",
     "--hidden-import", "torch",

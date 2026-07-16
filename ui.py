@@ -27,7 +27,7 @@ import urllib
 import ctypes
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from PyQt6.QtCore import pyqtProperty
+from PyQt6.QtCore import QPointF, pyqtProperty
 
 # ─── PYQT6 WIDGETS ──────────────────────────────────────────────────────
 from PyQt6.QtWidgets import (
@@ -48,7 +48,7 @@ from PyQt6.QtCore import (
 
 # ─── PYQT6 GUI ──────────────────────────────────────────────────────────
 from PyQt6.QtGui import (
-    QFont, QColor, QIcon, QMouseEvent, QPainterPath,
+    QBrush, QFont, QColor, QIcon, QMouseEvent, QPainterPath, QRadialGradient,
     QRegion, QResizeEvent, QPainter, QPen, QPixmap,
     QLinearGradient
 )
@@ -253,7 +253,6 @@ def apply_theme_tokens(theme_name: str, custom_hex: str = None):
     except Exception:
         pass
 
-
 def apply_glass_shadow(widget: QWidget, blur_radius: int = 30, x_offset: int = 0,
                        y_offset: int = 10, alpha: int = 150):
     shadow = QGraphicsDropShadowEffect(widget)
@@ -303,10 +302,126 @@ class WebBridge(QObject):
     def request_theme(self): QTimer.singleShot(0, self.orb.sync_theme)
 
 
+class HolographicAvatarWidget(QWidget):
+    audio_signal = pyqtSignal(float)
+    state_signal = pyqtSignal(str)
+    
+    def __init__(self, ui_ref, parent=None):
+        super().__init__(parent)
+        self.ui = ui_ref
+        self._current_vol = 0.0
+        self._state = "idle"
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update)
+        self.timer.start(30)
+        
+        self.audio_signal.connect(self._on_audio)
+        self.state_signal.connect(self._on_state)
+        
+    def sync_theme(self):
+        pass
+
+    def set_audio(self, level: float):
+        self.audio_signal.emit(level)
+
+    def set_state(self, state: str):
+        self.state_signal.emit(state)
+        
+        # Rotational angles
+        self.angle1 = 0
+        self.angle2 = 0
+        self.angle3 = 0
+
+    def _on_audio(self, v: float):
+        self._current_vol = self._current_vol * 0.7 + v * 0.3
+
+    def _on_state(self, s: str):
+        self._state = s
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        
+        # Increase angles
+        self.angle1 = (self.angle1 + 2) % 360
+        self.angle2 = (self.angle2 - 1.5) % 360
+        self.angle3 = (self.angle3 + 1) % 360
+        
+        # Base color based on state
+        if self._state == "listening":
+            base_color = QColor(0, 255, 204)  # Cyan
+        elif self._state == "speaking":
+            base_color = QColor(255, 51, 102)  # Neon Pink
+        elif self._state == "thinking":
+            base_color = QColor(245, 158, 11)  # Amber
+        elif self._state == "error":
+            base_color = QColor(255, 59, 48)  # Red
+        else:
+            base_color = QColor(C_PRI) if 'C_PRI' in globals() else QColor(180, 138, 255) # Primary
+            
+        vol_boost = min(1.0, self._current_vol * 1.5)
+        radius = 50 + (vol_boost * 30)
+        
+        painter.translate(cx, cy)
+        
+        # Draw central glowing orb
+        glow = QRadialGradient(0, 0, radius * 1.5)
+        glow_color = QColor(base_color)
+        glow_color.setAlphaF(0.4 + (vol_boost * 0.4))
+        glow.setColorAt(0, glow_color)
+        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(glow))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(0, 0), radius * 1.5, radius * 1.5)
+        
+        # Draw tech rings
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        
+        # Inner Ring
+        painter.save()
+        painter.rotate(self.angle1)
+        pen1 = QPen(base_color, 2, Qt.PenStyle.DashLine)
+        painter.setPen(pen1)
+        painter.drawEllipse(QPointF(0, 0), radius * 1.2, radius * 1.2)
+        painter.restore()
+        
+        # Middle Ring
+        painter.save()
+        painter.rotate(self.angle2)
+        mid_color = QColor(base_color)
+        mid_color.setAlphaF(0.6)
+        pen2 = QPen(mid_color, 1.5, Qt.PenStyle.DotLine)
+        painter.setPen(pen2)
+        painter.drawEllipse(QPointF(0, 0), radius * 1.5, radius * 1.5)
+        painter.restore()
+        
+        # Outer Ring
+        painter.save()
+        painter.rotate(self.angle3)
+        out_color = QColor(base_color)
+        out_color.setAlphaF(0.3)
+        pen3 = QPen(out_color, 1, Qt.PenStyle.SolidLine)
+        painter.setPen(pen3)
+        painter.drawEllipse(QPointF(0, 0), radius * 1.8, radius * 1.8)
+        
+        # Draw some tech arcs on outer ring
+        pen_arc = QPen(base_color, 3, Qt.PenStyle.SolidLine)
+        pen_arc.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen_arc)
+        r = int(radius * 1.8)
+        painter.drawArc(-r, -r, r*2, r*2, 0 * 16, 45 * 16)
+        painter.drawArc(-r, -r, r*2, r*2, 180 * 16, 45 * 16)
+        painter.restore()
+
 class CustomParticleOrb(QWidget):
     audio_signal = pyqtSignal(float)
     state_signal = pyqtSignal(str)
     theme_signal = pyqtSignal()
+    logo_style_signal = pyqtSignal(str)
 
     def __init__(self, ui, parent=None):
         super().__init__(parent)
@@ -340,7 +455,18 @@ class CustomParticleOrb(QWidget):
         self.audio_signal.connect(self._safe_set_audio)
         self.state_signal.connect(self._safe_set_state)
         self.theme_signal.connect(self._safe_sync_theme)
+        self.logo_style_signal.connect(self._safe_set_logo_style)  # ✅ AHORA EXISTE
         self.web_view.loadFinished.connect(self._on_load_finished)
+
+    # ─── MÉTODOS PARA ESTILOS DE LOGO (DEFINIDOS ANTES DE USARSE) ───
+    def sync_logo_style(self, style_name: str):
+        """Envía el estilo de logo al HTML."""
+        self.logo_style_signal.emit(style_name)
+
+    def _safe_set_logo_style(self, style_name: str):
+        """Ejecuta el JavaScript para cambiar el estilo del logo."""
+        self.web_view.page().runJavaScript(
+            f"if(window.setLogoStyle)window.setLogoStyle('{style_name}');")
 
     def _on_load_finished(self, ok):
         print(f"[ORB] loadFinished: {ok}")
@@ -352,11 +478,19 @@ class CustomParticleOrb(QWidget):
                 cfg = load_api_keys()
                 q = cfg.get("performance_quality", 80)
                 self.web_view.page().runJavaScript(f"if(window.updatePerformance)window.updatePerformance({q});")
-            except Exception: pass
+                # 🆕 Cargar estilo de logo guardado
+                self.sync_logo_style(cfg.get("nexus_logo_style", "clasico"))
+            except Exception: 
+                pass
 
-    def sync_theme(self): self.theme_signal.emit()
-    def set_audio(self, level: float): self.audio_signal.emit(level)
-    def set_state(self, state: str): self.state_signal.emit(state)
+    def sync_theme(self): 
+        self.theme_signal.emit()
+        
+    def set_audio(self, level: float): 
+        self.audio_signal.emit(level)
+        
+    def set_state(self, state: str): 
+        self.state_signal.emit(state)
 
     def _safe_sync_theme(self):
         colors = {'PRI': C_PRI, 'PRI_DIM': C_PRI_DIM, 'TEXT': C_TEXT, 'BG': C_BG}
@@ -368,7 +502,6 @@ class CustomParticleOrb(QWidget):
 
     def _safe_set_state(self, state: str):
         self.web_view.page().runJavaScript(f"if(window.updateState)window.updateState('{state}');")
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  CameraPreviewWindow
@@ -641,6 +774,48 @@ class ClockWidget(QWidget):
     def update_style(self):
         self.apply_theme()
 
+class MiniRing(QWidget):
+    """Ícono circular chiquito (tipo ◔) que se rellena según el porcentaje."""
+ 
+    def __init__(self, size=14, ring_width=2, parent=None):
+        super().__init__(parent)
+        self._size = size
+        self._ring_width = ring_width
+        self._value = 0
+        self._ring_color = QColor("#ffffff")
+        self._track_color = QColor(255, 255, 255, 45)
+        self.setFixedSize(size, size)
+ 
+    def setValue(self, value: float):
+        self._value = max(0, min(100, value))
+        self.update()
+ 
+    def setColors(self, ring_hex: str, track_qcolor: QColor):
+        self._ring_color = QColor(ring_hex)
+        self._track_color = track_qcolor
+        self.update()
+ 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+ 
+        pad = self._ring_width / 2 + 0.5
+        rect = QRectF(pad, pad, self._size - 2 * pad, self._size - 2 * pad)
+ 
+        pen = QPen(self._track_color)
+        pen.setWidthF(self._ring_width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(rect, 0, 360 * 16)
+ 
+        pen.setColor(self._ring_color)
+        painter.setPen(pen)
+        span_angle = int(-self._value / 100 * 360 * 16)
+        painter.drawArc(rect, 90 * 16, span_angle)
+ 
+        painter.end()
+ 
+ 
 class SystemMonitorWidget(QWidget):
     THEMES = [
         {
@@ -689,98 +864,105 @@ class SystemMonitorWidget(QWidget):
             "btn_fg": "#ffd9c2",
         },
     ]
-
+ 
     def __init__(self, parent=None):
         super().__init__(parent)
         # Antes era 100% click-through; lo desactivamos para que el botón "+" reciba el clic
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.setObjectName("SysMonitor")
-
+ 
         self._theme_index = 0
         self._icon_names = {
             "ram": "fa5s.microchip",
             "cpu": "fa5s.tachometer-alt",
             "disk": "fa5s.hdd",
         }
-
+ 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(10)
         layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-
+ 
         # ───── RAM (+ botón de tema en la misma fila, sin sumar altura) ─────
         self.row_ram = QHBoxLayout()
         self.row_ram.setSpacing(6)
         self.row_ram.setAlignment(Qt.AlignmentFlag.AlignRight)
-
+ 
         self.btn_theme = QPushButton("+")
         self.btn_theme.setFixedSize(16, 16)
         self.btn_theme.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_theme.setToolTip("Cambiar diseño del monitor")
         self.btn_theme.clicked.connect(self.next_theme)
-
+ 
         self.lbl_ram_val = QLabel("RAM 0%")
         self.lbl_ram_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
+ 
+        self.ring_ram = MiniRing()
+ 
         self.row_ram.addWidget(self.btn_theme, 0, Qt.AlignmentFlag.AlignVCenter)
         self.row_ram.addWidget(self.lbl_ram_val)
-
-        if HAS_QTA:
-            self.icon_ram = QLabel()
-            self.row_ram.addWidget(self.icon_ram)
+        self.row_ram.addWidget(self.ring_ram, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(self.row_ram)
-
+ 
         # ───── CPU ─────
         self.row_cpu = QHBoxLayout()
         self.row_cpu.setSpacing(6)
         self.row_cpu.setAlignment(Qt.AlignmentFlag.AlignRight)
-
+ 
         self.lbl_cpu_val = QLabel("CPU 0%")
         self.lbl_cpu_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.row_cpu.addWidget(self.lbl_cpu_val)
-
-        if HAS_QTA:
-            self.icon_cpu = QLabel()
-            self.row_cpu.addWidget(self.icon_cpu)
+ 
+        self.ring_cpu = MiniRing()
+        self.row_cpu.addWidget(self.ring_cpu, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(self.row_cpu)
-
+ 
         # ───── DISK ─────
         self.row_disk = QHBoxLayout()
         self.row_disk.setSpacing(6)
         self.row_disk.setAlignment(Qt.AlignmentFlag.AlignRight)
-
+ 
         self.lbl_disk_val = QLabel("DSK 0%")
         self.lbl_disk_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.row_disk.addWidget(self.lbl_disk_val)
-
-        if HAS_QTA:
-            self.icon_disk = QLabel()
-            self.row_disk.addWidget(self.icon_disk)
+ 
+        self.ring_disk = MiniRing()
+        self.row_disk.addWidget(self.ring_disk, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(self.row_disk)
-
+ 
+        # Nota: si además querés el ícono fontawesome (fa5s) junto al mini-anillo,
+        # descomentá este bloque:
+        # if HAS_QTA:
+        #     self.icon_ram = QLabel()
+        #     self.row_ram.addWidget(self.icon_ram)
+        #     self.icon_cpu = QLabel()
+        #     self.row_cpu.addWidget(self.icon_cpu)
+        #     self.icon_disk = QLabel()
+        #     self.row_disk.addWidget(self.icon_disk)
+ 
         # ⏱️ TIMER
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_stats)
         self.timer.start(2000)
-
+ 
         self.apply_theme()
         self.update_stats()
-
+ 
     def next_theme(self):
         """Avanza al siguiente diseño del monitor (cíclico)."""
         self._theme_index = (self._theme_index + 1) % len(self.THEMES)
         self.apply_theme()
-
+ 
     def apply_theme(self):
         theme = self.THEMES[self._theme_index]
-
+ 
         self.setStyleSheet(f"""
             QWidget#SysMonitor {{
                 background: {theme['panel_bg']};
                 border-radius: {theme['panel_radius']}px;
             }}
         """)
-
+ 
         text_style = f"""
             color: {theme['text_color']};
             font-size: 11px;
@@ -792,12 +974,18 @@ class SystemMonitorWidget(QWidget):
         self.lbl_ram_val.setStyleSheet(text_style)
         self.lbl_cpu_val.setStyleSheet(text_style)
         self.lbl_disk_val.setStyleSheet(text_style)
-
-        if HAS_QTA:
+ 
+        track = QColor(theme["icon_color"])
+        track.setAlpha(45)
+        self.ring_ram.setColors(theme["icon_color"], track)
+        self.ring_cpu.setColors(theme["icon_color"], track)
+        self.ring_disk.setColors(theme["icon_color"], track)
+ 
+        if HAS_QTA and hasattr(self, 'icon_ram'):
             self.icon_ram.setPixmap(qta.icon(self._icon_names["ram"], color=theme['icon_color']).pixmap(13, 13))
             self.icon_cpu.setPixmap(qta.icon(self._icon_names["cpu"], color=theme['icon_color']).pixmap(13, 13))
             self.icon_disk.setPixmap(qta.icon(self._icon_names["disk"], color=theme['icon_color']).pixmap(13, 13))
-
+ 
         self.btn_theme.setStyleSheet(f"""
             QPushButton {{
                 background: {theme['btn_bg']};
@@ -812,16 +1000,23 @@ class SystemMonitorWidget(QWidget):
             QPushButton:pressed {{ background: rgba(255,255,255,0.18); }}
         """)
         self.btn_theme.setToolTip(f"Diseño actual: {theme['name']} — clic para cambiar")
-
+ 
     def update_stats(self):
         try:
             ram = psutil.virtual_memory().percent
             cpu = psutil.cpu_percent(interval=None)
             disk = psutil.disk_usage('/').percent
-
+ 
             self.lbl_ram_val.setText(f"RAM {int(ram)}%")
-            if hasattr(self, 'lbl_cpu_val'): self.lbl_cpu_val.setText(f"CPU {int(cpu)}%")
-            if hasattr(self, 'lbl_disk_val'): self.lbl_disk_val.setText(f"DSK {int(disk)}%")
+            self.ring_ram.setValue(ram)
+ 
+            if hasattr(self, 'lbl_cpu_val'):
+                self.lbl_cpu_val.setText(f"CPU {int(cpu)}%")
+                self.ring_cpu.setValue(cpu)
+ 
+            if hasattr(self, 'lbl_disk_val'):
+                self.lbl_disk_val.setText(f"DSK {int(disk)}%")
+                self.ring_disk.setValue(disk)
         except Exception:
             pass
 
@@ -5347,6 +5542,7 @@ class SmartHomeWidget(QWidget):
 
     def _scan_devices(self):
         """Escanea dispositivos Bluetooth."""
+        from PyQt6.QtCore import QMetaObject, Qt as _Qt, Q_ARG 
         self.progress_bar.setValue(20)
         self._set_status("Escaneando Bluetooth...", "info")
         self.btn_scan.setEnabled(False)
@@ -5663,7 +5859,8 @@ class DeviceSettingsDialog(QFrame):
             ("Dispositivos", "fa5s.laptop-house"),
             ("Automatización", "fa5s.robot"),
             ("Macros", "fa5s.keyboard"),
-            ("Tienda", "fa5s.store")
+            ("Tienda", "fa5s.store"),
+            ("Arduino", "fa5s.microchip")
         ]
         self.tab_bar = StyledSideNav(tab_names)
         self.tab_bar.back_clicked.connect(self.reject)
@@ -5797,6 +5994,7 @@ class DeviceSettingsDialog(QFrame):
         self._build_tab_automation()
         self._build_tab_macros()
         self._build_tab_store()
+        self._build_tab_arduino()
 
         # Conectar navegación
         self.tab_bar.tab_changed.connect(self.stacked_widget.setCurrentIndex)
@@ -6018,6 +6216,123 @@ class DeviceSettingsDialog(QFrame):
             except Exception as e:
                 print(f"Error cambiando foto de perfil: {e}")
 
+
+    def _build_tab_arduino(self):
+        tab = self._create_tab_widget()
+        card = tab.add_card("🚀 CONEXIÓN ARDUINO", col_span=2)
+        layout = card.content_layout
+        
+        # Puertos COM
+        lbl_port = QLabel("🔌 Puerto COM:")
+        lbl_port.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
+        layout.addWidget(lbl_port, 0, 0)
+        
+        self.cmb_arduino_port = QComboBox()
+        self.cmb_arduino_port.setMinimumHeight(42)
+        self.cmb_arduino_port.setStyleSheet(self.cmb_ai_provider.styleSheet())
+        layout.addWidget(self.cmb_arduino_port, 0, 1)
+        
+        self.btn_refresh_ports = QPushButton("🔄 ACTUALIZAR")
+        self.btn_refresh_ports.setFixedHeight(42)
+        self.btn_refresh_ports.clicked.connect(self._refresh_arduino_ports)
+        layout.addWidget(self.btn_refresh_ports, 0, 2)
+        
+        # Botón Conectar
+        self.btn_connect_arduino = QPushButton("CONECTAR")
+        self.btn_connect_arduino.setFixedHeight(42)
+        self.btn_connect_arduino.clicked.connect(self._toggle_arduino_connection)
+        layout.addWidget(self.btn_connect_arduino, 1, 0, 1, 3)
+        
+        # Enviar Comandos
+        self.inp_arduino_cmd = QLineEdit()
+        self.inp_arduino_cmd.setPlaceholderText("Comando a enviar (ej: 1, 0, ON, OFF)")
+        self.inp_arduino_cmd.setMinimumHeight(42)
+        self.inp_arduino_cmd.setStyleSheet("""
+            QLineEdit {
+                background: rgba(0,0,0,0.3);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 12px;
+                padding: 10px 16px;
+                color: rgba(255,255,255,0.9);
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border-color: rgba(245, 158, 11, 0.3);
+            }
+        """)
+        layout.addWidget(self.inp_arduino_cmd, 2, 0, 1, 2)
+        
+        self.btn_send_cmd = QPushButton("ENVIAR")
+        self.btn_send_cmd.setFixedHeight(42)
+        self.btn_send_cmd.clicked.connect(self._send_arduino_cmd)
+        layout.addWidget(self.btn_send_cmd, 2, 2)
+        
+        # Consola
+        self.arduino_console = QTextEdit()
+        self.arduino_console.setReadOnly(True)
+        self.arduino_console.setMinimumHeight(150)
+        self.arduino_console.setStyleSheet("""
+            QTextEdit {
+                background: rgba(0,0,0,0.5);
+                color: #00ff00;
+                font-family: Consolas, monospace;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.arduino_console, 3, 0, 1, 3)
+        
+        self.stacked_widget.addWidget(tab)
+        self._refresh_arduino_ports()
+        
+    def _refresh_arduino_ports(self):
+        self.cmb_arduino_port.clear()
+        try:
+            from core.arduino_manager import arduino
+            ports = arduino.get_available_ports()
+            for p in ports:
+                self.cmb_arduino_port.addItem(p)
+            if not ports:
+                self.cmb_arduino_port.addItem("No hay puertos")
+        except:
+            self.cmb_arduino_port.addItem("Error cargando puertos")
+            
+    def _toggle_arduino_connection(self):
+        try:
+            from core.arduino_manager import arduino
+            if arduino.is_connected:
+                arduino.disconnect()
+                self.btn_connect_arduino.setText("CONECTAR")
+                self.arduino_console.append("[Sistema] Desconectado.")
+            else:
+                port = self.cmb_arduino_port.currentText()
+                if "No hay" in port or "Error" in port:
+                    return
+                ok, msg = arduino.connect(port)
+                self.arduino_console.append(f"[Sistema] {msg}")
+                if ok:
+                    self.btn_connect_arduino.setText("DESCONECTAR")
+                    arduino.on_message_received = self._arduino_msg_received
+        except Exception as e:
+            self.arduino_console.append(f"[Error] {e}")
+            
+    def _send_arduino_cmd(self):
+        cmd = self.inp_arduino_cmd.text().strip()
+        if not cmd: return
+        try:
+            from core.arduino_manager import arduino
+            ok, msg = arduino.send_command(cmd)
+            self.arduino_console.append(f"> {msg}")
+            self.inp_arduino_cmd.clear()
+        except Exception as e:
+            self.arduino_console.append(f"[Error] {e}")
+            
+    def _arduino_msg_received(self, msg):
+        # We need to use a signal or QMetaObject.invokeMethod to update GUI from thread
+        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+        QMetaObject.invokeMethod(self.arduino_console, "append", Qt.ConnectionType.QueuedConnection, Q_ARG(str, f"< {msg}"))
+
     def _build_tab_general(self):
         tab = self._create_tab_widget()
         
@@ -6214,6 +6529,28 @@ class DeviceSettingsDialog(QFrame):
         layout1.addWidget(QLabel("Variante de Partículas:"), 6, 0)
         layout1.addWidget(self.cmb_star_variant, 6, 1)
 
+        self.chk_pro_widgets = QCheckBox("Estilos de Widgets PRO (Requiere Tienda)")
+        layout1.addWidget(self.chk_pro_widgets, 7, 0, 1, 2)
+
+
+        # ─── DISEÑO DEL LOGO ──────────────────────────────────────────
+        self.cmb_logo_style = QComboBox()
+        self.cmb_logo_style.setMinimumHeight(40)
+        logo_styles = [
+            ("clasico", "Clásico (por defecto)"),
+            ("neon", "Neón"),
+            ("minimal", "Minimalista"),
+            ("cyberpunk", "Cyberpunk"),
+            ("oro", "Oro Elegante"),
+            ("retro", "Retro Digital"),
+        ]
+        for val, desc in logo_styles:
+            self.cmb_logo_style.addItem(desc, val)
+            layout1.addWidget(QLabel("Diseño del Logo (Orbe):"), 8, 0)
+            layout1.addWidget(self.cmb_logo_style, 8, 1)
+        
+
+
         # --- Card 3: 🛠️ COLOR PERSONALIZADO ---
         card2 = tab.add_card("🛠️ COLOR PERSONALIZADO", col_span=2)
         layout2 = card2.content_layout
@@ -6358,22 +6695,23 @@ class DeviceSettingsDialog(QFrame):
     # ─── PESTAÑA INTELIGENCIA (IA CLOUD + IA LOCAL OLLAMA + VOZ) ───────────
 
     def _build_tab_intelligence(self):
+        self._internal_api_keys = {}
         tab = self._create_tab_widget()
         
         # --- Card 1: INTEGRACIÓN DE IA (Cloud Keys & Provider) ---
         card1 = tab.add_card("🧠 INTEGRACIÓN DE IA", col_span=2)
         layout1 = card1.content_layout
         
-        # Gemini API Key
-        lbl_gemini = QLabel("🔑 Gemini API Key:")
-        lbl_gemini.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
-        layout1.addWidget(lbl_gemini, 0, 0)
+        # Dynamic API Key Input
+        self.lbl_dynamic_api = QLabel("🔑 API Key:")
+        self.lbl_dynamic_api.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
+        layout1.addWidget(self.lbl_dynamic_api, 4, 0)
         
-        self.inp_gemini = QLineEdit()
-        self.inp_gemini.setEchoMode(QLineEdit.EchoMode.Password)
-        self.inp_gemini.setPlaceholderText("Ingresa tu API Key de Gemini")
-        self.inp_gemini.setMinimumHeight(42)
-        self.inp_gemini.setStyleSheet("""
+        self.inp_dynamic_api = QLineEdit()
+        self.inp_dynamic_api.setEchoMode(QLineEdit.EchoMode.Password)
+        self.inp_dynamic_api.setPlaceholderText("Ingresa tu API Key")
+        self.inp_dynamic_api.setMinimumHeight(42)
+        self.inp_dynamic_api.setStyleSheet("""
             QLineEdit {
                 background: rgba(0,0,0,0.3);
                 border: 1px solid rgba(255,255,255,0.08);
@@ -6386,32 +6724,8 @@ class DeviceSettingsDialog(QFrame):
                 border-color: rgba(245, 158, 11, 0.3);
             }
         """)
-        layout1.addWidget(self.inp_gemini, 0, 1, 1, 3)
-        
-        # OpenRouter API Key
-        lbl_openrouter = QLabel("🔓 OpenRouter API Key:")
-        lbl_openrouter.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
-        layout1.addWidget(lbl_openrouter, 1, 0)
-        
-        self.inp_openrouter = QLineEdit()
-        self.inp_openrouter.setEchoMode(QLineEdit.EchoMode.Password)
-        self.inp_openrouter.setPlaceholderText("Ingresa tu API Key de OpenRouter")
-        self.inp_openrouter.setMinimumHeight(42)
-        self.inp_openrouter.setStyleSheet("""
-            QLineEdit {
-                background: rgba(0,0,0,0.3);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 12px;
-                padding: 10px 16px;
-                color: rgba(255,255,255,0.9);
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border-color: rgba(245, 158, 11, 0.3);
-            }
-        """)
-        layout1.addWidget(self.inp_openrouter, 1, 1, 1, 3)
-        
+        layout1.addWidget(self.inp_dynamic_api, 4, 1, 1, 3)
+
         # Modelo OpenRouter
         lbl_model = QLabel("🤖 Modelo OpenRouter:")
         lbl_model.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
@@ -6445,6 +6759,9 @@ class DeviceSettingsDialog(QFrame):
         self.cmb_ai_provider.addItem("🔵 Google Gemini (Cloud)", "gemini")
         self.cmb_ai_provider.addItem("🟣 OpenRouter (Cloud)", "openrouter")
         self.cmb_ai_provider.addItem("🟢 Ollama (Local)", "ollama")
+        self.cmb_ai_provider.addItem("🟢 ChatGPT (OpenAI)", "openai")
+        self.cmb_ai_provider.addItem("🌌 Grok", "grok")
+        self.cmb_ai_provider.addItem("⚡ Groq", "groq")
         self.cmb_ai_provider.setStyleSheet("""
             QComboBox {
                 background: rgba(0,0,0,0.3);
@@ -6469,10 +6786,22 @@ class DeviceSettingsDialog(QFrame):
         """)
         layout1.addWidget(self.cmb_ai_provider, 3, 1, 1, 3)
         
+        def _on_provider_changed():
+            provider = self.cmb_ai_provider.currentData()
+            # save current text to previous provider
+            if hasattr(self, "_last_provider"):
+                self._internal_api_keys[self._last_provider] = self.inp_dynamic_api.text().strip()
+            # load new provider text
+            self.inp_dynamic_api.setText(self._internal_api_keys.get(provider, ""))
+            self.lbl_dynamic_api.setText(f"🔑 API Key ({provider.capitalize()}):")
+            self._last_provider = provider
+
+        self.cmb_ai_provider.currentIndexChanged.connect(_on_provider_changed)
+        
         # Zona Horaria
         lbl_timezone = QLabel("🌐 Zona Horaria:")
         lbl_timezone.setStyleSheet("color: rgba(255,255,255,0.8); font-weight: 600; font-size: 12px;")
-        layout1.addWidget(lbl_timezone, 4, 0)
+        layout1.addWidget(lbl_timezone, 5, 0)
         
         self.cmb_timezone = QComboBox()
         self.cmb_timezone.setMinimumHeight(42)
@@ -6511,7 +6840,7 @@ class DeviceSettingsDialog(QFrame):
                 padding: 4px;
             }
         """)
-        layout1.addWidget(self.cmb_timezone, 4, 1, 1, 3)
+        layout1.addWidget(self.cmb_timezone, 5, 1, 1, 3)
         
         # --- Card 2: 🟢 CONFIGURACIÓN OLLAMA ---
         card_ollama = tab.add_card("🟢 CONFIGURACIÓN OLLAMA", col_span=2)
@@ -7962,9 +8291,22 @@ class DeviceSettingsDialog(QFrame):
             from memory.config_manager import load_api_keys
             cfg = load_api_keys()
 
-            self.inp_gemini.setText(cfg.get("gemini_api_key", ""))
-            self.inp_openrouter.setText(cfg.get("openrouter_api_key", ""))
+            self._internal_api_keys["gemini"] = cfg.get("gemini_api_key", "")
+            self._internal_api_keys["openai"] = cfg.get("openai_api_key", "")
+            self._internal_api_keys["grok"] = cfg.get("grok_api_key", "")
+            self._internal_api_keys["groq"] = cfg.get("groq_api_key", "")
+            self._internal_api_keys["openrouter"] = cfg.get("openrouter_api_key", "")
+            self._internal_api_keys["ollama"] = cfg.get("ollama_api_key", "http://localhost:11434")
             self.inp_openrouter_model.setText(cfg.get("openrouter_model", "google/gemini-2.5-flash"))
+            
+            # Select provider
+            active_provider = cfg.get("active_ai_provider", "gemini")
+            idx = self.cmb_ai_provider.findData(active_provider)
+            if idx >= 0:
+                self.cmb_ai_provider.setCurrentIndex(idx)
+            self._last_provider = active_provider
+            self.inp_dynamic_api.setText(self._internal_api_keys.get(active_provider, ""))
+            self.lbl_dynamic_api.setText(f"?? API Key ({active_provider.capitalize()}):")
             self.inp_ai_name.setText(cfg.get("ai_name", ""))
             self.chk_only_name_response.setChecked(bool(cfg.get("respond_only_by_name", False)))
             self.inp_app_icon.setText(cfg.get("nexus_app_icon", ""))
@@ -7998,6 +8340,26 @@ class DeviceSettingsDialog(QFrame):
             if idx >= 0:
                 self.cmb_star_variant.setCurrentIndex(idx)
             self.cmb_star_variant.setEnabled(self.chk_stars.isChecked())
+
+            logo_style = cfg.get("nexus_logo_style", "clasico")
+            idx = self.cmb_logo_style.findData(logo_style)
+            if idx >= 0:
+                self.cmb_logo_style.setCurrentIndex(idx)
+            
+            try:
+                from shop import load_unlocks
+                ul = load_unlocks()
+                
+                has_widgets = bool(ul.get("widget_customization", False))
+                self.chk_pro_widgets.setEnabled(has_widgets)
+                self.chk_pro_widgets.setChecked(cfg.get("pro_widget_styles", False) and has_widgets)
+                if not has_widgets:
+                    self.chk_pro_widgets.setText("Estilos de Widgets PRO (Desbloquea en Tienda)")
+                
+
+            except Exception:
+                pass
+
             self._toggle_theme_fields()
             if self.custom_color_hex:
                 self.lbl_color_preview.setStyleSheet(
@@ -8169,16 +8531,27 @@ class DeviceSettingsDialog(QFrame):
             cam_dev = self.cmb_camera.currentData() or 0
 
             cfg = load_api_keys()
+            # Save currently typing key to dict
+            provider = self.cmb_ai_provider.currentData()
+            self._internal_api_keys[provider] = self.inp_dynamic_api.text().strip()
             cfg.update({
                 "nexus_stars": self.chk_stars.isChecked(),
                 "nexus_star_variant": self.cmb_star_variant.currentData(),
+                "nexus_logo_style": self.cmb_logo_style.currentData(),  
                 "sounds_enabled": self.chk_sounds_enabled.isChecked(),
                 "sounds_volume": self.sld_volume.value() / 100.0,
                 "ai_name": self.inp_ai_name.text().strip(),
                 "respond_only_by_name": self.chk_only_name_response.isChecked(),
                 "nexus_app_icon": self.inp_app_icon.text().strip(),
-                "gemini_api_key": self.inp_gemini.text().strip(),
-                "openrouter_api_key": self.inp_openrouter.text().strip(),
+                "gemini_api_key": self._internal_api_keys.get("gemini", "").strip(),
+                "openai_api_key": self._internal_api_keys.get("openai", "").strip(),
+                "grok_api_key": self._internal_api_keys.get("grok", "").strip(),
+                "groq_api_key": self._internal_api_keys.get("groq", "").strip(),
+                "openrouter_api_key": self._internal_api_keys.get("openrouter", "").strip(),
+                "ollama_api_key": self._internal_api_keys.get("ollama", "").strip(),
+                "active_ai_provider": self.cmb_ai_provider.currentData(),
+                "pro_widget_styles": self.chk_pro_widgets.isChecked(),
+
                 "openrouter_model": self.inp_openrouter_model.text().strip(),
                 "ai_provider": self.cmb_ai_provider.currentData(),
                 "fish_audio_enabled": self.chk_fish_audio.isChecked(),
@@ -8236,6 +8609,8 @@ class DeviceSettingsDialog(QFrame):
                 if hasattr(main_win, "orb") and main_win.orb:
                     main_win.orb.web_view.page().runJavaScript(
                         f"if(window.updatePerformance)window.updatePerformance({self.sld_performance.value()});")
+                    # 🆕 Actualizar estilo de logo en caliente
+                    main_win.orb.sync_logo_style(self.cmb_logo_style.currentData())
                 if hasattr(main_win, "_apply_widget_visibility"):
                     main_win._apply_widget_visibility()
 
@@ -8368,13 +8743,13 @@ class DraggableSticker(QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.position().toPoint()
+            self._drag_pos = event.globalPosition().toPoint() - self.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            new_pos = self.pos() + event.position().toPoint() - self._drag_pos
+            new_pos = event.globalPosition().toPoint() - self._drag_pos
             # Clamp dentro del parent
             parent = self.parentWidget()
             if parent:
@@ -8449,10 +8824,16 @@ class MainWindow(QMainWindow):
 
         try:
            from memory.config_manager import load_api_keys
-           _star_variant = load_api_keys().get("nexus_star_variant", "estrellas")
+           _cfg = load_api_keys()
+           _star_variant = _cfg.get("nexus_star_variant", "estrellas")
+
+           _pro_widgets = _cfg.get("pro_widget_styles", False)
         except Exception:
             _star_variant = "estrellas"
-        self.star_overlay = StarOverlayWidget(self.central_widget, variant=_star_variant)  # 👈 ESTO FALTABA (se borró sin querer)
+
+            _pro_widgets = False
+
+        self.star_overlay = StarOverlayWidget(self.central_widget, variant=_star_variant)
         self.star_overlay.setGeometry(0, 0, self.central_widget.width(), self.central_widget.height())
         self.star_overlay.lower()
         self.lbl_bg_image.lower()
@@ -8494,6 +8875,29 @@ class MainWindow(QMainWindow):
         self.files_panel.hide()
         self.notes_w.hide()
         self.todo_w.hide()
+        
+        # ─── APLICAR ESTILOS PRO ────────────────────────────────────
+        if getattr(self, "_pro_widgets_enabled", False) or locals().get("_pro_widgets", False):
+            try:
+                from PyQt6.QtWidgets import QGraphicsDropShadowEffect
+                from PyQt6.QtGui import QColor
+                glow_color = QColor(C_PRI) if 'C_PRI' in globals() else QColor(0, 255, 204)
+                glow_color.setAlphaF(0.6)
+                
+                widgets_to_glow = [
+                    self.clock_w, self.sys_monitor, self.weather_widget, 
+                    self.notif_panel, self.calendar_popup, self.files_panel, 
+                    self.notes_w, self.todo_w
+                ]
+                
+                for w in widgets_to_glow:
+                    shadow = QGraphicsDropShadowEffect()
+                    shadow.setBlurRadius(25)
+                    shadow.setColor(glow_color)
+                    shadow.setOffset(0, 0)
+                    w.setGraphicsEffect(shadow)
+            except Exception as e:
+                print("Error aplicando estilos PRO:", e)
 
         self.chat_bar = PillChatBar(self.central_widget)
         self.chat_bar.submitted.connect(self._submit_chat_command)

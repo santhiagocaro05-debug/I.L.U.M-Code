@@ -12,6 +12,7 @@ from pathlib import Path
 import warnings
 import gc
 from typing import TYPE_CHECKING
+from core.aec_processor import AECProcessor
 
 if TYPE_CHECKING:
     from ui import NexusUI
@@ -26,7 +27,7 @@ def get_app_version():
     Si no existe, lo crea automáticamente con la versión por defecto.
     """
     version_file = Path(__file__).resolve().parent / "config" / "version.txt"
-    default_version = "2.0.4"
+    default_version = "2.0.7"
     
     # Crear carpeta config si no existe
     version_file.parent.mkdir(parents=True, exist_ok=True)
@@ -175,42 +176,91 @@ def _play_wav_sound(sound_name: str) -> bool:
         return False
 
 
+_sound_cache: dict[str, pygame.mixer.Sound] = {}
+
 def play_mp3_sound(sound_name: str):
-    """Play an mp3 sound from the assets folder asynchronously."""
-    global _playing_sounds
+    """Play an mp3 sound from the assets folder asynchronously (cacheado — no vuelve a decodificar el archivo en cada llamada)."""
     try:
         if not pygame.mixer.get_init():
             pygame.mixer.init()
-        # Resolve base_path using _MEIPASS for PyInstaller compatibility
+
         if getattr(sys, 'frozen', False):
             base_path = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(sys.executable)), "assets")
         else:
             base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-            
-        file_path = os.path.join(base_path, f"{sound_name}.mp3")
-        if os.path.exists(file_path):
-            if sound_name == "meditacion":
+
+        if sound_name == "meditacion":
+            # Se transmite en loop vía music channel — no aplica caché de Sound acá
+            file_path = os.path.join(base_path, f"{sound_name}.mp3")
+            if os.path.exists(file_path):
                 pygame.mixer.music.load(file_path)
                 pygame.mixer.music.play(loops=-1)
+                print(f"[NEXUS] Reproduciendo sonido: {sound_name}")
             else:
-                s = pygame.mixer.Sound(file_path)
-                s.set_volume(1.0)
-                s.play()
-                _playing_sounds.append(s)
-                # Cleanup list occasionally to prevent memory leak
-                if len(_playing_sounds) > 10:
-                    _playing_sounds.pop(0)
-            print(f"[NEXUS] Reproduciendo sonido: {sound_name}")
-        else:
-            print(f"[NEXUS] Archivo de sonido no encontrado: {file_path}")
+                print(f"[NEXUS] Archivo de sonido no encontrado: {file_path}")
+            return
+
+        # ── Sonidos cortos: se decodifican UNA sola vez y quedan en memoria ──
+        sound = _sound_cache.get(sound_name)
+        if sound is None:
+            file_path = os.path.join(base_path, f"{sound_name}.mp3")
+            if not os.path.exists(file_path):
+                print(f"[NEXUS] Archivo de sonido no encontrado: {file_path}")
+                return
+            sound = pygame.mixer.Sound(file_path)
+            sound.set_volume(1.0)
+            _sound_cache[sound_name] = sound
+
+        sound.play()
+        print(f"[NEXUS] Reproduciendo sonido: {sound_name}")
+
     except Exception as e:
         print(f"Error playing {sound_name}: {e}")
+
+def _preload_all_sounds():
+    """
+    Precachea todos los sonidos cortos (.mp3) de assets/ al arrancar,
+    para que el primer play() de cada uno no tenga que decodificar el
+    archivo en caliente.
+    """
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(sys.executable)), "assets")
+        else:
+            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+
+        if not os.path.isdir(base_path):
+            print(f"[NEXUS] ⚠️ Carpeta assets no encontrada en {base_path}, se omite precarga.")
+            return
+
+        loaded = 0
+        for filename in os.listdir(base_path):
+            if not filename.lower().endswith(".mp3"):
+                continue
+            sound_name = filename[:-4]
+            if sound_name == "meditacion" or sound_name in _sound_cache:
+                continue
+            try:
+                sound = pygame.mixer.Sound(os.path.join(base_path, filename))
+                sound.set_volume(1.0)
+                _sound_cache[sound_name] = sound
+                loaded += 1
+            except Exception as e:
+                print(f"[NEXUS] ⚠️ No se pudo precargar {filename}: {e}")
+
+        print(f"[NEXUS] 🔊 {loaded} sonidos precargados en caché.")
+    except Exception as e:
+        print(f"[NEXUS] ⚠️ Error precargando sonidos: {e}")
 
 import traceback
 from pathlib import Path
 
 # ── Dedicated thread pool for tool execution — prevents starvation ────────────
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="nexus-tool")
+_TTS_EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix="nexus-tts")
 
 try:
     from zoneinfo import ZoneInfo as _ZoneInfo
@@ -588,10 +638,7 @@ try:
     from actions.discord_control   import discord_control
 except ImportError:
     discord_control = None
-try:
-    from actions.youtube_control   import youtube_control
-except ImportError:
-    youtube_control = None
+
 try:
     from actions.blind_reader      import blind_reader
 except ImportError:
@@ -829,19 +876,20 @@ def _load_system_prompt() -> str:
         try:
             cfg = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
             user_name = cfg.get("user_name", "Señor").strip()
-            ai_name = cfg.get("ai_name", "I.L.U.M.").strip()
+            ai_name = cfg.get("ai_name", "N.E.X.U.S").strip()
             if user_name:
                 prompt_text += f"\n\n## PERSONALIZACIÓN DEL USUARIO\nEl nombre del usuario es '{user_name}'. Dirígete a él como '{user_name}' (o variantes cortas respetuosas como 'señor {user_name}') de manera leal y natural en cada interacción, a menos que él te pida explícitamente cambiar su nombre."
             if ai_name and ai_name.upper() != "NEXUS":
                 prompt_text += f"\n\n## DIRECTIVA DE IDENTIDAD (IMPORTANTE)\nTu nombre ha sido reasignado oficialmente a '{ai_name}'. Eres el ecosistema inteligente {ai_name}, y debes presentarte y referirte a ti mismo exclusivamente como {ai_name}, NO como NEXUS."
         except Exception:
             pass
+        _cached_prompt = prompt_text
         return prompt_text
     except Exception:
-        ai_name = "I.L.U.M."
+        ai_name = "N.E.X.U.S"
         try:
             cfg = json.loads(API_CONFIG_PATH.read_text(encoding="utf-8"))
-            ai_name = cfg.get("ai_name", "I.L.U.M.").strip()
+            ai_name = cfg.get("ai_name", "N.E.X.U.S").strip()
         except Exception:
             pass
             
@@ -1029,57 +1077,6 @@ TOOL_DECLARATIONS = [
     }
 },
 {
-    "name": "network_manager",
-    "description": (
-        "Gestión completa de redes WiFi y dispositivos de red. "
-        "Permite listar redes WiFi, conectar/desconectar, escanear dispositivos "
-        "en la red local, hacer speed test, obtener IP local y pública, "
-        "cambiar servidores DNS, limpiar caché DNS, y abrir un panel "
-        "visual 'liquid glass' con todas las redes y dispositivos. "
-        "USAR cuando el usuario pida: 'conéctame a WiFi', 'lista redes WiFi', "
-        "'qué dispositivos hay en mi red', 'prueba velocidad de internet', "
-        "'cuál es mi IP', 'cambia el DNS', 'limpia la caché DNS', "
-        "'abre el panel de redes', 'configuración de WiFi'."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "action": {
-                "type": "STRING",
-                "description": (
-                    "list_wifi — lista redes WiFi disponibles | "
-                    "connect — conecta a una red WiFi (requiere ssid y opcional password) | "
-                    "disconnect — desconecta de la red WiFi actual | "
-                    "scan_devices — escanea dispositivos en la red local | "
-                    "speed_test — prueba velocidad de internet (requiere speedtest-cli) | "
-                    "get_ip — obtiene IP local y pública | "
-                    "set_dns — cambia servidores DNS (default: 8.8.8.8, 8.8.4.4) | "
-                    "flush_dns — limpia caché DNS | "
-                    "open_panel — abre el panel visual liquid glass de redes | "
-                    "open_wifi_settings — abre configuración de WiFi de Windows"
-                )
-            },
-            "ssid": {
-                "type": "STRING",
-                "description": "Nombre de la red WiFi (requerido para connect)"
-            },
-            "password": {
-                "type": "STRING",
-                "description": "Contraseña de la red WiFi (opcional para connect, si la red es abierta no hace falta)"
-            },
-            "dns1": {
-                "type": "STRING",
-                "description": "Primer servidor DNS (default: 8.8.8.8)"
-            },
-            "dns2": {
-                "type": "STRING",
-                "description": "Segundo servidor DNS (default: 8.8.4.4)"
-            }
-        },
-        "required": ["action"]
-    }
-},
-    {
     "name": "vscode_control",
     "description": (
         "Control avanzado de Visual Studio Code. Permite abrir proyectos, "
@@ -1109,27 +1106,6 @@ TOOL_DECLARATIONS = [
             "query": {"type": "STRING", "description": "Búsqueda de extensiones"},
             "command": {"type": "STRING", "description": "Comando interno de VS Code"},
             "content": {"type": "STRING", "description": "Contenido para create_file"}
-        },
-        "required": ["action"]
-    }
-},
-    {
-    "name": "contextual_control",
-    "description": (
-        "Control contextual de entorno. Ajusta dinámicamente volumen, brillo, plan de energía "
-        "y estado de Focus Assist (No Molestar) basándose en la ventana activa o comandos manuales."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "action": {
-                "type": "STRING",
-                "description": "adjust_context (auto-ajustar por ventana activa) | set_volume (fijar volumen) | set_brightness (fijar brillo) | set_power_plan (energía) | set_dnd (no molestar)"
-            },
-            "volume": {"type": "INTEGER", "description": "Nivel de volumen maestro (0-100)"},
-            "brightness": {"type": "INTEGER", "description": "Nivel de brillo de la pantalla (0-100)"},
-            "power_plan": {"type": "STRING", "description": "Plan de energía de Windows: balanced | high_performance | power_saver"},
-            "state": {"type": "STRING", "description": "Estado de No Molestar (Focus Assist): on | off | alarms"}
         },
         "required": ["action"]
     }
@@ -1291,21 +1267,6 @@ TOOL_DECLARATIONS = [
     }
 },
 {
-    "name": "smart_file_organizer",
-    "description": (
-        "Análisis y organización inteligente de archivos. Clasifica por categorías, "
-        "detecta duplicados y analiza espacio en disco."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "action": {"type": "STRING", "description": "organize | find_duplicates | disk_space"},
-            "directory": {"type": "STRING", "description": "Directorio a analizar"}
-        },
-        "required": ["action"]
-    }
-},
-{
     "name": "proactive_automation",
     "description": (
         "Gestiona reglas complejas basadas en el uso del sistema para optimizar el rendimiento "
@@ -1319,20 +1280,6 @@ TOOL_DECLARATIONS = [
             "trigger": {"type": "STRING", "description": "cpu_high | ram_high | time_of_day | app_open"},
             "trigger_value": {"type": "STRING", "description": "Valor del disparador"},
             "action_to_take": {"type": "STRING", "description": "Acción a ejecutar"}
-        },
-        "required": ["action"]
-    }
-},
-{
-    "name": "camera_bus",
-    "description": (
-        "Controla el subsistema de pilotaje y navegación gestual por cámara. "
-        "Permite activar, desactivar o alternar el control gestual del mouse usando la webcam."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "action": {"type": "STRING", "description": "enable | disable | toggle"}
         },
         "required": ["action"]
     }
@@ -1746,20 +1693,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "social_media",
-        "description": "Búsqueda de perfiles y videos en TikTok, Instagram, FB, y descarga de videos sin marca de agua.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "search_profile | search_video | download_video"},
-                "platform": {"type": "STRING", "description": "tiktok | instagram | facebook"},
-                "query": {"type": "STRING", "description": "Usuario o tema de búsqueda"},
-                "url": {"type": "STRING", "description": "URL del video para descargar"}
-            },
-            "required": ["action"]
-        }
-    },
-    {
         "name": "descargar_youtube",
         "description": "Descarga un video o musica de YouTube.",
         "parameters": {
@@ -1843,18 +1776,6 @@ TOOL_DECLARATIONS = [
                 "message": {"type": "STRING", "description": "El mensaje a enviar"}
             },
             "required": ["action", "receiver", "message"]
-        }
-    },
-    {
-        "name": "youtube_control",
-        "description": "Controla YouTube en la web (abrir, buscar, play_video, play_pause, next, mute, fullscreen).",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "Acción a realizar: open, search, play_video, play_pause, next, mute, fullscreen"},
-                "query": {"type": "STRING", "description": "Qué buscar o reproducir si la acción es 'search' o 'play_video'"}
-            },
-            "required": ["action"]
         }
     },
     {
@@ -3208,106 +3129,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "tool_creator",
-        "description": (
-            "Permite a NEXUS programar e instalar sus propias herramientas. "
-            "ÚSALO SIEMPRE que el usuario te pida que aprendas a hacer algo nuevo, o si necesitas una funcionalidad que no tienes preinstalada. "
-            "Escribirás el código Python y se instalará automáticamente."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "tool_name": {
-                    "type": "STRING",
-                    "description": "Nombre de la herramienta en snake_case"
-                },
-                "description": {
-                    "type": "STRING",
-                    "description": "Descripción clara de la herramienta y para qué sirve"
-                },
-                "parameters_schema": {
-                    "type": "STRING",
-                    "description": "El bloque de 'properties' del JSON schema en formato string válido. Ej: '{\"accion\": {\"type\": \"STRING\"}}'"
-                },
-                "python_code": {
-                    "type": "STRING",
-                    "description": "Código Python con la función def <tool_name>(parameters: dict, player=None, speak=None) -> str:"
-                }
-            },
-            "required": ["tool_name", "description", "parameters_schema", "python_code"]
-        }
-    },
-    {
-        "name": "proactive_automation",
-        "description": (
-            "Gestiona reglas complejas basadas en el uso y hábitos del sistema operativo "
-            "para optimizar el rendimiento y automatizar recordatorios proactivos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {
-                    "type": "STRING",
-                    "description": "add_rule (añadir regla) | list_rules (listar) | delete_rule (eliminar) | trigger_check (evaluar reglas activas)"
-                },
-                "rule_name": {
-                    "type": "STRING",
-                    "description": "Nombre identificativo de la regla de automatización"
-                },
-                "trigger": {
-                    "type": "STRING",
-                    "description": "Disparador: cpu_high | ram_high | time_of_day | app_open"
-                },
-                "trigger_value": {
-                    "type": "STRING",
-                    "description": "Valor del disparador (ej. '85' para 85% cpu, '22:00' para hora, 'chrome.exe' para app)"
-                },
-                "action_to_take": {
-                    "type": "STRING",
-                    "description": "Acción a ejecutar (ej. 'optimize_ram', 'mute_system', 'run_script')"
-                }
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "unified_communications",
-        "description": (
-            "Gestión unificada de comunicaciones. Permite leer, enviar y organizar mensajes "
-            "y notificaciones en WhatsApp, Telegram, Discord y Gmail desde esta única interfaz."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "platform": {
-                    "type": "STRING",
-                    "description": "Plataforma de comunicación: whatsapp | telegram | discord | gmail"
-                },
-                "action": {
-                    "type": "STRING",
-                    "description": "send_message (enviar mensaje)"
-                },
-                "recipient": {
-                    "type": "STRING",
-                    "description": "Destinatario: número telefónico para WhatsApp, ID de chat o token para Telegram, Webhook URL para Discord, o email para Gmail"
-                },
-                "message": {
-                    "type": "STRING",
-                    "description": "Contenido del mensaje a enviar"
-                },
-                "subject": {
-                    "type": "STRING",
-                    "description": "Asunto del correo (solo aplica para Gmail)"
-                },
-                "token": {
-                    "type": "STRING",
-                    "description": "Token de Bot opcional para Telegram"
-                }
-            },
-            "required": ["platform", "action", "recipient", "message"]
-        }
-    },
-    {
         "name": "smart_file_organizer",
         "description": (
             "Análisis y organización inteligente de archivos. Clasifica por categorías, "
@@ -3359,44 +3180,6 @@ TOOL_DECLARATIONS = [
                 }
             },
             "required": ["action"]
-        }
-    },
-    {
-        "name": "auto_programmer",
-        "description": (
-            "Suite de desarrollo y auto-programación autónoma avanzada. Permite a NEXUS escribir "
-            "código Python para nuevas herramientas, validar sintaxis con py_compile, correr tests sintácticos "
-            "en un sandbox con traceback detallado, corregir errores e inyectar plugins en caliente."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {
-                    "type": "STRING",
-                    "description": "create_tool (crear/actualizar) | fix_tool (corregir error) | test_tool (probar en sandbox) | list_tools (listar creadas)"
-                },
-                "tool_name": {
-                    "type": "STRING",
-                    "description": "Nombre de la herramienta en snake_case"
-                },
-                "description": {
-                    "type": "STRING",
-                    "description": "Descripción clara de la herramienta y su uso"
-                },
-                "parameters_schema": {
-                    "type": "STRING",
-                    "description": "JSON de propiedades de parámetros. Ej: '{\"param\": {\"type\": \"STRING\"}}'"
-                },
-                "python_code": {
-                    "type": "STRING",
-                    "description": "Código Python con la función def <tool_name>(parameters: dict, player=None) -> str:"
-                },
-                "test_parameters": {
-                    "type": "OBJECT",
-                    "description": "Parámetros mock de prueba para evaluar la ejecución de la función en el sandbox"
-                }
-            },
-            "required": ["action", "tool_name"]
         }
     },
     {
@@ -3505,6 +3288,13 @@ class NexusLive:
         self.last_speech_time     = 0.0
         self.ai_name = (cfg_keys.get("ai_name", "NEXUS") or "NEXUS").strip() or "NEXUS"
         self.respond_only_by_name = bool(cfg_keys.get("respond_only_by_name", False))
+        self.conversation_hot_until = 0.0
+        self.vision_buffer = []  # To hold the last few screenshots for permanent vision
+        
+        # Iniciar Daemon AGI Proactivo
+        import threading
+        self._agi_daemon = threading.Thread(target=self._run_agi_daemon, daemon=True)
+        self._agi_daemon.start()
         self.update_wake_words(cfg_keys)
 
         # ── Fish Audio (clonación de voz en la nube) — opcional ─────────────
@@ -3555,6 +3345,7 @@ class NexusLive:
         except Exception as e:
             print(f"[NEXUS] No se pudo cargar Vosk: {e}")
         self.audio_in_queue = None
+        self.aec = AECProcessor(frame_size=CHUNK_SIZE, sample_rate=SEND_SAMPLE_RATE, filter_length=8192)
         # Iniciar scheduler y motor de reglas en background al arrancar NEXUS
         start_runner(player=ui, speak=None)
         start_rules_runner(player=ui, speak=None)
@@ -3849,8 +3640,19 @@ class NexusLive:
         if text == "SYS_UNAUTHORIZED_SPEAKER":
             text = "[SYS: El hablante actual es DESCONOCIDO. Rechaza la orden educadamente indicando que solo sirves a tu señor.]"
 
-        if getattr(self, "respond_only_by_name", False) and not self._is_name_activation(text):
-            return
+        is_hot = time.time() < getattr(self, "conversation_hot_until", 0)
+        if getattr(self, "respond_only_by_name", False) and not is_hot:
+            if not self._is_name_activation(text):
+                return
+            # Verificar que haya una instrucción además del nombre
+            text_lower = str(text).lower().strip()
+            # Remover palabras comunes de activación
+            for w in ["nexus", "nex", getattr(self, "ai_name", "").lower().strip()]:
+                if w and len(w) > 1:
+                    text_lower = re.sub(rf"\b{re.escape(w)}\b", "", text_lower).strip()
+            if not text_lower or len(text_lower) < 2:
+                # Solo dijo el nombre sin pedir nada, ignorar
+                return
 
         if not self._loop or not self.session:
             return
@@ -4080,7 +3882,10 @@ class NexusLive:
     def set_speaking(self, value: bool):
         with self._speaking_lock:
             self._is_speaking = value
+            if not value:
+                self.conversation_hot_until = time.time() + 12.0  # 12 seconds hot timeout
         if value:
+            self._speak_start_time = time.time()
             self.ui.set_state("SPEAKING")
         elif getattr(self, "is_sleeping", False):
             self.ui.set_state("MUTED")
@@ -4381,9 +4186,7 @@ class NexusLive:
                     r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: network_manager(parameters=args, player=self.ui))
                     result = r or "Gestión de red ejecutada."
 
-                elif name == "youtube_control":
-                    r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: youtube_control(parameters=args, player=self.ui))
-                    result = r or "Done."
+            
 
                 elif name == "vscode_control":
                     r = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: vscode_control(parameters=args, player=self.ui))
@@ -5047,6 +4850,10 @@ class NexusLive:
 
         def callback(indata, frames, time_info, status):
             import time
+
+            _clean_bytes = self.aec.process_capture(indata.tobytes())
+            indata = np.frombuffer(_clean_bytes, dtype=np.int16).reshape(indata.shape)
+
             # Si el usuario hace clic en el botón de la interfaz para desmutear, salir de suspensión
             if getattr(self, "is_sleeping", False) and not self.ui.muted:
                 self.is_sleeping = False
@@ -5214,6 +5021,8 @@ class NexusLive:
                         _safe_put, self.out_queue, {"data": data, "mime_type": "audio/pcm"}
                     )
             elif nexus_speaking:
+                if time.time() - getattr(self, "_speak_start_time", 0) < 0.6:
+                    return
                 try:
                     rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2))) / 32768.0
                     self.ui.set_audio_level(min(1.0, rms * 15))
@@ -5314,7 +5123,7 @@ class NexusLive:
                     from voice.fish_tts import synthesize_speech, FISH_CHUNK_BYTES
                     loop = asyncio.get_event_loop()
                     pcm_data = await loop.run_in_executor(
-                        None,
+                        _TTS_EXECUTOR,
                         lambda: synthesize_speech(
                             text=text,
                             voice_id=self._fish_voice_id,
@@ -5376,7 +5185,7 @@ class NexusLive:
                         except Exception as e:
                             print(f"[NEXUS] Exception in local synthesis thread: {e}")
                     
-                    await loop.run_in_executor(None, run_synthesis)
+                    await loop.run_in_executor(_TTS_EXECUTOR, run_synthesis)
                     
                 except Exception as e:
                     print(f"[NEXUS] ❌ Error en síntesis de voz local: {e}")
@@ -5556,6 +5365,7 @@ class NexusLive:
                                 break
                             try:
                                 await asyncio.to_thread(stream.write, buffered)
+                                self.aec.push_reference(buffered)
                             except Exception as write_err:
                                 print(f"[NEXUS] Stream write ignored: {write_err}")
                         _jitter_buf.clear()
@@ -5581,6 +5391,7 @@ class NexusLive:
                                 break
                             try:
                                 await asyncio.to_thread(stream.write, buffered)
+                                self.aec.push_reference(buffered)
                             except Exception as write_err:
                                 print(f"[NEXUS] Stream write ignored: {write_err}")
                         _jitter_buf.clear()
@@ -5671,8 +5482,8 @@ class NexusLive:
                     continue
 
                 try:
-                    # En modo supervivencia forzamos Ollama.
-                    response_text = await loop.run_in_executor(None, lambda: openrouter_agent(text, force_provider="ollama"))
+                    # Usar el proveedor configurado (Ollama, OpenAI, Grok, etc.)
+                    response_text = await loop.run_in_executor(_TOOL_EXECUTOR, lambda: openrouter_agent(text))
                 except Exception as e:
                     response_text = f"Error al procesar la solicitud localmente: {e}"
                 
@@ -5721,6 +5532,69 @@ class NexusLive:
             if stream: stream.close()
             process_task.cancel()
 
+
+    def _run_agi_daemon(self):
+        import time
+        import psutil
+        from PIL import ImageGrab
+        import io
+        import os
+        from pathlib import Path
+        
+        tick = 0
+        while True:
+            time.sleep(10)
+            if not self._loop or not self.session:
+                continue
+            if getattr(self, "is_sleeping", False):
+                continue
+                
+            tick += 1
+            
+            # 1. Visión Permanente (cada 20s = 2 ticks)
+            if tick % 2 == 0:
+                try:
+                    # Capturar pantalla en baja resolución para buffer
+                    screenshot = ImageGrab.grab()
+                    screenshot.thumbnail((800, 600)) # Low res to save RAM
+                    buf = io.BytesIO()
+                    screenshot.save(buf, format="JPEG", quality=60)
+                    self.vision_buffer.append(buf.getvalue())
+                    if len(self.vision_buffer) > 3:
+                        self.vision_buffer.pop(0)
+                except:
+                    pass
+            
+            # 2. Modo Proactivo: Batería y CPU (cada 60s = 6 ticks)
+            if tick % 6 == 0:
+                try:
+                    battery = psutil.sensors_battery()
+                    if battery and not battery.power_plugged and battery.percent < 20:
+                        if getattr(self, "_last_battery_warn", 100) > battery.percent:
+                            self.speak(f"Aviso de sistema: La batería está al {int(battery.percent)}%. Te sugiero conectarla.")
+                            self._last_battery_warn = battery.percent
+                            
+                    cpu_usage = psutil.cpu_percent(interval=None)
+                    if cpu_usage > 95:
+                        if time.time() - getattr(self, "_last_cpu_warn", 0) > 300: # only warn every 5 mins
+                            self.speak("El uso del procesador está al máximo. Recomiendo cerrar algunos programas.")
+                            self._last_cpu_warn = time.time()
+                except:
+                    pass
+                    
+            # 3. Organización Automática de Archivos (cada 10 mins = 60 ticks)
+            if tick % 60 == 0:
+                try:
+                    target_dir = Path.home() / "Downloads"
+                    if target_dir.exists():
+                        unorganized_files = [f for f in target_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
+                        if len(unorganized_files) > 20:
+                            if time.time() - getattr(self, "_last_org_warn", 0) > 3600: # Only ask once an hour
+                                self.speak(f"He detectado {len(unorganized_files)} archivos sin organizar en tu carpeta de Descargas. ¿Deseas que los clasifique automáticamente?")
+                                self._last_org_warn = time.time()
+                except:
+                    pass
+
     async def run(self):
         # ── VERIFICACIÓN DE INTEGRIDAD EN CALIENTE (LOOP ASÍNCRONO) ────────
         from hashlib import sha256
@@ -5749,11 +5623,11 @@ class NexusLive:
             cfg_path = Path(__file__).resolve().parent / "config" / "api_keys.json"
             if cfg_path.exists():
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                api_provider = cfg.get("ai_provider", "gemini").lower().strip()
+                api_provider = cfg.get("active_ai_provider", "gemini").lower().strip()
         except Exception:
             pass
 
-        if api_provider in ["ollama", "openrouter"]:
+        if api_provider != "gemini":
             while True:
                 try:
                     await self._offline_run(check_internet=False)
@@ -5968,10 +5842,10 @@ def main():
         
         gemini = cfg.get("gemini_api_key", "").strip()
         openrouter = cfg.get("openrouter_api_key", "").strip()
-        ai_provider = cfg.get("ai_provider", "gemini").strip()
+        ai_provider = cfg.get("active_ai_provider", "gemini").strip()
         
-        # If Ollama is the active provider, or if we have at least one cloud key set, we are safe to start
-        if ai_provider == "ollama" or gemini or openrouter:
+        # If the active provider is not Gemini, or if we have at least one key, start safely
+        if ai_provider != "gemini" or gemini or openrouter:
             return
             
         from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
@@ -6120,7 +5994,7 @@ def main():
             
             # --- AUTO-UPDATE CHECK WITH UI ---
             try:
-                current_version = "2.0.4"
+                current_version = "2.0.7"
                 version_file = Path(__file__).resolve().parent / "config" / "version.txt"
                 if version_file.exists():
                     current_version = version_file.read_text(encoding="utf-8").strip()
@@ -6201,7 +6075,9 @@ def main():
     except Exception as _sound_err:
         print(f"[NEXUS] ⚠️ No se pudo reproducir el audio de inicio: {_sound_err}")
 
-    # --- START BACKGROUND LICENSE GUARDIAN ---
+    threading.Thread(target=_preload_all_sounds, daemon=True).start()
+
+    # --- START BACKGROUND LICENSE GUARDIAN ---#
     try:
         def _start_license_guardian(ui_instance):
             from PyQt6.QtCore import QTimer

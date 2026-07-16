@@ -76,7 +76,6 @@ bleak==0.21.1
 
 # ─── COMPILACIÓN ────────────────────────────────────────────────────
 pyinstaller==6.3.0
-nuitka==2.1.8
 cx-Freeze==7.0.0
 ordered-set==4.1.0
 zstandard==0.22.0
@@ -85,5 +84,10 @@ zstandard==0.22.0
 tzdata==2023.3
 cffi==1.16.0
 pycparser==2.21
-greenlet==3.0.0
+greenlet==3.0.1
 win32-setctime==1.1.0
+openai
+groq
+pyserial
+playwright
+pyarmor
